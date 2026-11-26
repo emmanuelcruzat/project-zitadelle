@@ -1,0 +1,4 @@
+node_modules/
+# songs are not redistributed; add your own files to public/music/ (see README)
+public/music/*
+!public/music/.gitkeep

@@ -1,0 +1,15 @@
+{
+  "name": "zitadelle",
+  "version": "0.2.0",
+  "description": "A diep.io-style multiplayer tank game set during Operation Citadel, 1943.",
+  "private": true,
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js",
+    "dev": "node -e \"process.env.ZITADELLE_DEV='1';require('./server/server.js')\""
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

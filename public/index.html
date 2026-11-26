@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zitadelle</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Oswald:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="menu" class="overlay">
+  <div class="panel wide">
+    <h1>ZITADELLE</h1>
+    <div class="sub">Kursk Salient &middot; July 1943</div>
+    <input id="name" maxlength="16" placeholder="Commander name" autocomplete="off" spellcheck="false">
+    <div class="factions">
+      <button class="faction de" data-team="de"><canvas width="240" height="180"></canvas><span class="fname">Germany</span><small>Panzer III</small></button>
+      <button class="faction su" data-team="su"><canvas width="240" height="180"></canvas><span class="fname">Soviet Union</span><small>T-34/76</small></button>
+    </div>
+    <div class="spawnlbl">Vehicle</div>
+    <div id="menupick" class="picker"></div>
+    <button id="deploy" class="btn">Deploy</button>
+    <div id="status"></div>
+    <div class="help">
+      Germany attacks up two lines, <b>A5</b>&ndash;<b>A1</b> and <b>B5</b>&ndash;<b>B1</b>, which meet at <b>O1</b>. You can only fight for a point next to one your side holds. Taking O1 wins for the attackers; if the defenders retake A5 or B5 that line is lost, and losing both loses the battle. Every vehicle comes out of a limited reserve.<br>
+      <kbd>A</kbd><kbd>D</kbd> steer hull &middot; <kbd>W</kbd><kbd>S</kbd> forward/reverse<br>
+      Only some heavies can pivot in place; most tanks swing slowly when stopped, and halftracks must be rolling to turn.<br>
+      <kbd>Mouse</kbd> aim &middot; <kbd>Click</kbd> fire &middot; <kbd>Right-click</kbd> machine guns (some vehicles) &middot; <kbd>F</kbd> autofire &middot; <kbd>Wheel</kbd> zoom &middot; <kbd>M</kbd> mute<br>
+      Tank destroyers must point their hull at the target. Guns take time to reload, and firing on the move is inaccurate.<br>
+      Front armor deflects, rear armor doesn't.
+    </div>
+  </div>
+</div>
+
+<div id="death" class="overlay hidden">
+  <div class="panel wide">
+    <div class="dtitle">KNOCKED OUT</div>
+    <div id="dkiller"></div>
+    <div class="dstats">
+      <div><span id="dscore">0</span><label>Score</label></div>
+      <div><span id="dkills">0</span><label>Kills</label></div>
+      <div><span id="ddeaths">0</span><label>Deaths</label></div>
+      <div><span id="dtime">0:00</span><label>Survived</label></div>
+    </div>
+    <div class="spawnlbl">Vehicle</div>
+    <div id="deathpick" class="picker"></div>
+    <div class="spawnlbl">Deploy at</div>
+    <div id="spawns" class="spawns"></div>
+    <div class="row">
+      <button id="respawn" class="btn">Redeploy</button>
+      <button id="tohq" class="btn secondary" title="Only between battles">Switch sides (T)</button>
+    </div>
+  </div>
+</div>
+
+
+<script src="shared.js"></script>
+<script src="client.js"></script>
+</body>
+</html>
