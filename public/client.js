@@ -775,9 +775,9 @@ function drawIntro() {
   ctx.globalAlpha = out;
   ctx.fillStyle = col; ctx.fillRect(cx - lw / 2, cy + fs * 0.95, lw, 3);
   ctx.globalAlpha = ease((a - 1.1) / 0.5) * out;
-  // "DEUTSCHES REICH · GERMANY · [shield] AXIS"
+  // "DEUTSCHES REICH · [shield] AXIS"
   const coal = Z.FACTIONS[intro.team].coalition, ts = Math.max(13, fs * 0.2), ty = cy + fs * 0.95 + 26;
-  const lead = `${T.sub}  ·  ${TEAMS[intro.team].name.toUpperCase()}  ·  `, word = coal.toUpperCase();
+  const lead = `${T.sub}  ·  `, word = coal.toUpperCase();
   ctx.font = `400 ${ts}px Oswald, Impact, sans-serif`;
   const bh = ts * 1.5, bw = bh * 64 / 72, gap = ts * 0.4;
   const ldw = ctx.measureText(lead).width, ww = ctx.measureText(word).width, x0 = cx - (ldw + bw + gap + ww) / 2;
