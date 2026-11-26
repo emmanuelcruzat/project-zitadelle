@@ -130,3 +130,6 @@ kbd {
 .veh .vcat { font-style: normal; font-size: 10px; letter-spacing: .5px; color: #a99f78; line-height: 1; }
 .veh.empty { opacity: .35; cursor: not-allowed; }
 .veh.empty .vcat { color: #e0573f; }
+
+/* the Tab leaderboard is drawn on the canvas: hide the panels that would sit on top of it */
+body.board-open #menu, body.board-open .deathcard, body.board-open .deploypanel, body.board-open .mapbar { visibility: hidden; }

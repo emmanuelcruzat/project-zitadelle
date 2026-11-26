@@ -140,7 +140,7 @@ function setSight(on) {
 }
 
 addEventListener('keydown', e => {
-  if (state !== 'play' || e.target.tagName === 'INPUT') return;
+  if (state !== 'play' || showBoard || e.target.tagName === 'INPUT') return;
   const k = e.key.toLowerCase();
   keys.add(k);
   if (k === 'f' && !e.repeat) { autofire = !autofire; bigMessage(autofire ? 'Autofire ON' : 'Autofire OFF', 1.2); }
@@ -153,6 +153,7 @@ addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
 addEventListener('blur', () => { keys.clear(); mouse.down = mouse.rdown = false; });
 canvas.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
 canvas.addEventListener('mousedown', e => {
+  if (showBoard) return;
   if (e.button === 0) mouse.down = true;
   if (e.button === 2) {
     mouse.rdown = true;
@@ -164,7 +165,7 @@ addEventListener('mouseup', e => { if (e.button === 0) mouse.down = false; if (e
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 canvas.addEventListener('wheel', e => {
   e.preventDefault();
-  if (state !== 'play') return;
+  if (state !== 'play' || showBoard) return;
   const f = Math.pow(1.15, -Math.sign(e.deltaY));
   if (view2.sight) view2.sightZoom = clamp(view2.sightZoom * f, SIGHT_MIN, SIGHT_MAX);
   else view2.zoom = clamp(view2.zoom * f, 1, ZOOM_MAX);
@@ -1802,7 +1803,7 @@ function sendInput(dt) {
   const th = (k('w') || k('arrowup')) - (k('s') || k('arrowdown'));
   const rot = (k('d') || k('arrowright')) - (k('a') || k('arrowleft'));
   const ax = cam.x + (mouse.x - W / 2) / cam.scale, ay = cam.y + (mouse.y - H / 2) / cam.scale;
-  send({ t: 'in', th, rot, ax: Math.round(ax), ay: Math.round(ay), f: mouse.down || autofire ? 1 : 0, m: mouse.rdown ? 1 : 0, cx: Math.round(cam.x), cy: Math.round(cam.y) });
+  send({ t: 'in', th, rot, ax: Math.round(ax), ay: Math.round(ay), f: (mouse.down || autofire) && !showBoard ? 1 : 0, m: mouse.rdown && !showBoard ? 1 : 0, cx: Math.round(cam.x), cy: Math.round(cam.y) });
 }
 
 // switch sides: only allowed in the break between battles
@@ -1819,6 +1820,7 @@ function deploy(team) {
   if (!connected || dmap.sel == null) return;
   playerTeam = team;
   saveSel();
+  dmap.last = { code: dmap.sel, team };   // remembered so the next redeploy starts zoomed in here
   if (you) send({ t: 'respawn', team, sp: dmap.sel, c: selCls[team] });
   else {
     send({ t: 'join', name: playerName, team, sp: dmap.sel, c: selCls[team] });
@@ -1857,7 +1859,7 @@ function onPlayerDeath(e) {
 // =====================================================================
 // stage 'map': the whole battlefield, hover a highlighted point and click it; 'zoom': the camera swoops in;
 // 'pick': the vehicle panel is up. Used both when knocked out and when first joining.
-const dmap = { open: false, stage: 'map', sel: null, selX: 0, selY: 0, hover: null, opts: [], lookT: 0 };
+const dmap = { open: false, stage: 'map', sel: null, selX: 0, selY: 0, hover: null, opts: [], lookT: 0, last: null };
 // every rear area and capture point of your side, and whether you can deploy there right now
 // (mirrors the server's spawnOk, including enemies within reach of the point)
 function spawnOptions() {
@@ -1887,6 +1889,11 @@ function openDeployMap() {
   ui.mapbar.classList.remove('hidden');
   ui.death.classList.add('hidden');
   buildPicker(ui.deathPicker, playerTeam);
+  // go straight back to where you last deployed, if that spot is still yours and safe
+  if (dmap.last && dmap.last.team === playerTeam) {
+    const o = spawnOptions().find(q => q.code === dmap.last.code);
+    if (o && o.ok) chooseSpawn(o);
+  }
 }
 function closeDeployMap() {
   dmap.open = false; dmap.sel = null; dmap.hover = null;
@@ -1915,6 +1922,7 @@ function onTeamChanged() {
 }
 function updateDeployMap(dt) {
   dmap.opts = spawnOptions();
+  if (showBoard) { dmap.hover = null; dmap.btnHover = false; canvas.style.cursor = ''; return; }
   if (dmap.stage === 'map') {
     // hover: the point under the cursor (small ones get a minimum target size)
     let best = null, bd = Infinity;
@@ -2023,39 +2031,46 @@ function drawDeployMap(a) {
 let board = null, showBoard = false;
 function drawBoard() {
   if (!showBoard || !board) return;
-  const colW = Math.min(380, (W - 48) / 2), rowH = 22, head = 58;
+  // darken everything behind it
+  ctx.fillStyle = 'rgba(8,8,5,0.62)'; ctx.fillRect(0, 0, W, H);
   const teams = ['de', 'su'].map(tm => board.filter(r => TEAM_IDS[r[1]] === tm).sort((p, q) => q[3] - p[3]));
-  const maxRows = Math.max(1, Math.floor((H - 220 - head) / rowH));
-  const rows = Math.min(maxRows, Math.max(1, ...teams.map(t => t.length)));
-  const h = head + rows * rowH + 10, y0 = Math.max(90, (H - h) / 2);
+  const n = Math.max(1, ...teams.map(t => t.length));
+  // laid out at a base size, then scaled up as far as the screen allows (rows get cut only if it still won't fit)
+  const k = clamp(Math.min((W - 48) / (2 * 380 + 16), (H - 60) / (58 + n * 22 + 10)), 0.85, 1.6);
+  const colW = 380 * k, rowH = 22 * k, head = 58 * k, gap = 8 * k;
+  const maxRows = Math.max(1, Math.floor((H - 60 - head - 10 * k) / rowH));
+  const rows = Math.min(maxRows, n);
+  const h = head + rows * rowH + 10 * k, y0 = Math.max(30, (H - h) / 2);
+  const f = v => v * k;   // font / offset sizes
   teams.forEach((list, ti) => {
-    const tm = ti ? 'su' : 'de', x0 = W / 2 + (ti ? 8 : -8 - colW);
-    ctx.fillStyle = 'rgba(22,21,15,0.9)'; ctx.fillRect(x0, y0, colW, h);
-    ctx.fillStyle = TEAMS[tm].mini; ctx.fillRect(x0, y0, colW, 3);
-    const kills = list.reduce((n, r) => n + r[4], 0);
-    hudText(TEAMS[tm].name.toUpperCase(), x0 + 12, y0 + 20, 18, '#f0e8c8', 'left');
-    hudText(`${list.length} tanks · ${kills} kills`, x0 + colW - 12, y0 + 20, 12, '#a99f78', 'right', 400);
-    const cS = x0 + colW - 92, cK = x0 + colW - 50, cD = x0 + colW - 16;
-    hudText('COMMANDER', x0 + 40, y0 + 44, 10, '#8d8668', 'left', 400);
-    hudText('SCORE', cS, y0 + 44, 10, '#8d8668', 'right', 400);
-    hudText('K', cK, y0 + 44, 10, '#8d8668', 'right', 400);
-    hudText('D', cD, y0 + 44, 10, '#8d8668', 'right', 400);
+    const tm = ti ? 'su' : 'de', x0 = W / 2 + (ti ? gap : -gap - colW);
+    ctx.fillStyle = 'rgba(22,21,15,0.94)'; ctx.fillRect(x0, y0, colW, h);
+    ctx.strokeStyle = 'rgba(93,86,57,0.9)'; ctx.lineWidth = 2; ctx.strokeRect(x0, y0, colW, h);
+    ctx.fillStyle = TEAMS[tm].mini; ctx.fillRect(x0, y0, colW, f(4));
+    const kills = list.reduce((m, r) => m + r[4], 0);
+    hudText(TEAMS[tm].name.toUpperCase(), x0 + f(12), y0 + f(21), 18, '#f0e8c8', 'left');
+    hudText(`${list.length} tanks · ${kills} kills`, x0 + colW - f(12), y0 + f(21), 12, '#a99f78', 'right', 400);
+    const cS = x0 + colW - f(92), cK = x0 + colW - f(50), cD = x0 + colW - f(16);
+    hudText('COMMANDER', x0 + f(40), y0 + f(45), 10, '#8d8668', 'left', 400);
+    hudText('SCORE', cS, y0 + f(45), 10, '#8d8668', 'right', 400);
+    hudText('K', cK, y0 + f(45), 10, '#8d8668', 'right', 400);
+    hudText('D', cD, y0 + f(45), 10, '#8d8668', 'right', 400);
     list.slice(0, rows).forEach((r, i) => {
-      const y = y0 + head + i * rowH + rowH / 2 - 2, mine = you && r[0] === you.id;
+      const y = y0 + head + i * rowH + rowH / 2 - f(2), mine = you && r[0] === you.id;
       if (mine) { ctx.fillStyle = 'rgba(231,220,177,0.16)'; ctx.fillRect(x0 + 3, y - rowH / 2, colW - 6, rowH); }
       else if (i % 2) { ctx.fillStyle = 'rgba(255,255,255,0.03)'; ctx.fillRect(x0 + 3, y - rowH / 2, colW - 6, rowH); }
       ctx.globalAlpha = r[7] ? 1 : 0.5;     // knocked out: dimmed
-      drawInsignia(ctx, tm, r[6], x0 + 22, y, 15);
+      drawInsignia(ctx, tm, r[6], x0 + f(22), y, f(15));
       // clip long names short of the score column
-      ctx.save(); ctx.beginPath(); ctx.rect(x0 + 34, y - rowH / 2, cS - 50 - (x0 + 34), rowH); ctx.clip();
-      hudText(r[2], x0 + 40, y, 13, mine ? '#fff6c8' : '#e8e0c0', 'left', mine ? 600 : 400);
+      ctx.save(); ctx.beginPath(); ctx.rect(x0 + f(34), y - rowH / 2, cS - f(50) - (x0 + f(34)), rowH); ctx.clip();
+      hudText(r[2], x0 + f(40), y, 13, mine ? '#fff6c8' : '#e8e0c0', 'left', mine ? 600 : 400);
       ctx.restore();
       hudText(fmt(r[3]), cS, y, 13, '#e8e0c0', 'right', 400);
       hudText(String(r[4]), cK, y, 13, '#e8e0c0', 'right', 400);
       hudText(String(r[5]), cD, y, 13, '#e8e0c0', 'right', 400);
       ctx.globalAlpha = 1;
     });
-    if (list.length > rows) hudText(`+${list.length - rows} more`, x0 + colW / 2, y0 + h - 6, 11, '#8d8668', 'center', 400);
+    if (list.length > rows) hudText(`+${list.length - rows} more`, x0 + colW / 2, y0 + h - f(6), 11, '#8d8668', 'center', 400);
   });
 }
 
@@ -2192,20 +2207,25 @@ document.getElementById('tomenu').addEventListener('click', () => {
   backToMenu();
 });
 canvas.addEventListener('click', () => {
-  if (state !== 'dead' || !dmap.open) return;
+  if (state !== 'dead' || !dmap.open || showBoard) return;
   if (dmap.stage === 'map') { if (dmap.hover && dmap.hover.ok) chooseSpawn(dmap.hover); }
   else if (dmap.stage === 'pick' && overDeployButton(mouse.x, mouse.y)) { if (dmap.canDeploy) deploy(playerTeam); }
   else backToMap();   // zoomed in on a point: clicking anywhere else off the vehicle panel pulls back out
 });
 addEventListener('keydown', e => {
-  if (e.key === 'Tab' && e.target.tagName !== 'INPUT') { e.preventDefault(); showBoard = true; }
+  if (e.key === 'Tab' && e.target.tagName !== 'INPUT') {
+    // the board takes over: let go of everything (driving, firing) until Tab is released
+    e.preventDefault(); showBoard = true; document.body.classList.add('board-open');
+    keys.clear(); mouse.down = mouse.rdown = false;
+  }
+  if (showBoard) return;
   if (state !== 'dead' || !dmap.open || e.target.tagName === 'INPUT') return;
   if (e.key === 'Enter' && dmap.stage === 'pick' && dmap.canDeploy) deploy(playerTeam);
   if (e.key === 'Escape') { if (dmap.stage !== 'map') backToMap(); else if (!you) backToMenu(); }
   if (e.key.toLowerCase() === 't' && !e.repeat) switchSides();
 });
-addEventListener('keyup', e => { if (e.key === 'Tab') showBoard = false; });
-addEventListener('blur', () => { showBoard = false; });
+addEventListener('keyup', e => { if (e.key === 'Tab') { showBoard = false; document.body.classList.remove('board-open'); } });
+addEventListener('blur', () => { showBoard = false; document.body.classList.remove('board-open'); });
 
 // =====================================================================
 // Main loop
