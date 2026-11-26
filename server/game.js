@@ -116,10 +116,13 @@ function createGame(opts = {}) {
     gunReload(i) { const g = this.cls.guns[i]; return this.reloadT * g.reload * RELOAD_MULT[g.kind]; }
     initGuns() {
       this.cds = this.cls.guns.map(() => 0);
+      this.ammo = this.cls.guns.map(g => g.clip);          // rounds left in the magazine (magazine guns)
+      this.magLoad = this.cls.guns.map(() => false);       // true while changing magazines
       this.wasFiring = false;
       // secondary MGs: angle relative to their frame (so they ride with hull/turret), cooldown, can-bear flag
       const mgs = this.cls.mgs || [];
       this.mgRel = mgs.map(m => m.b); this.mgCd = mgs.map(() => 0); this.mgBear = mgs.map(() => false);
+      this.mgAmmo = mgs.map(m => m.clip); this.mgMag = mgs.map(() => 0);   // rounds left; seconds left changing belts
     }
     // Every vehicle fights with fixed stats; the differences come purely from its class definition.
     recalc() {
@@ -214,7 +217,8 @@ function createGame(opts = {}) {
       this.invuln = 0;
       // calibre class drives the sound/shake on clients: 0 light, 1 medium, 2 heavy
       const cal = g.w * g.size >= 0.38 || g.dmg >= 2.5 ? 2 : g.w * g.size > 0.27 || g.dmg >= 1.3 ? 1 : 0;
-      ev({ e: 'f', id: this.id, g: i, x: r1(m.x), y: r1(m.y), a: r3(fa), k: KINDS.indexOf(g.kind), b: cal, r: r1(r) });
+      ev({ e: 'f', id: this.id, g: i, x: r1(m.x), y: r1(m.y), a: r3(fa), k: KINDS.indexOf(g.kind), b: cal, r: r1(r),
+        mm: g.mm || 0, v: r2(g.spd) });
     }
     update(dt) {
       const inp = this.input, c = this.cls;
@@ -286,20 +290,34 @@ function createGame(opts = {}) {
       }
       this.wasFiring = firing;
       for (let i = 0; i < c.guns.length; i++) {
-        const loading = this.cds[i] > 0;
+        const g = c.guns[i], loading = this.cds[i] > 0;
         this.cds[i] -= dt;
         if (this.cds[i] <= 0) {
-          if (i === 0 && loading && c.guns[0].kind !== 'mg') pev(this, { e: 'rd' }); // breech closes
-          if (firing) { this.fire(i); this.cds[i] = Math.max(0, this.cds[i] + this.gunReload(i)); }
-          else this.cds[i] = 0;
+          // breech closes / fresh magazine seated (not between rounds of a magazine)
+          if (i === 0 && loading && g.kind !== 'mg' && (!g.clip || this.magLoad[i])) pev(this, { e: 'rd' });
+          if (g.clip && this.magLoad[i]) { this.ammo[i] = g.clip; this.magLoad[i] = false; }
+          if (firing) {
+            this.fire(i);
+            if (!g.clip) this.cds[i] = Math.max(0, this.cds[i] + this.gunReload(i));
+            else if (--this.ammo[i] > 0) this.cds[i] = Math.max(0, this.cds[i] + g.cycle);
+            else { this.cds[i] = this.gunReload(i); this.magLoad[i] = true; }      // empty: change magazines
+          } else this.cds[i] = 0;
         }
       }
       if (c.mgs) {
         for (let i = 0; i < c.mgs.length; i++) {
+          const m = c.mgs[i];
+          if (this.mgMag[i] > 0) {                                  // changing belts: can't fire until it's done
+            this.mgMag[i] -= dt;
+            if (this.mgMag[i] <= 0) { this.mgMag[i] = 0; this.mgAmmo[i] = m.clip; }
+            continue;
+          }
           this.mgCd[i] -= dt;
           if (this.mgCd[i] <= 0) {
-            if (inp.mg && phase === 'play' && this.mgBear[i]) { this.fireMg(i); this.mgCd[i] = Math.max(0, this.mgCd[i] + c.mgs[i].reload); }
-            else this.mgCd[i] = 0;
+            if (inp.mg && phase === 'play' && this.mgBear[i]) {
+              this.fireMg(i); this.mgCd[i] = Math.max(0, this.mgCd[i] + m.reload);
+              if (--this.mgAmmo[i] <= 0) { this.mgMag[i] = m.mag; this.mgCd[i] = 0; }
+            } else this.mgCd[i] = 0;
           }
         }
       }
@@ -1115,8 +1133,13 @@ function createGame(opts = {}) {
     if (includeBoard) snap.lb = tanks.map(k => [k.id, TEAM_IDS.indexOf(k.team), k.name, k.score, k.kills, k.deaths, k.rank, k.alive ? 1 : 0]);
     if (t) {
       snap.you = { id: t.id, alive: t.alive ? 1 : 0, score: t.score, rank: t.rank, deaths: t.deaths, c: t.cls.idx, kills: t.kills, fov: r3(t.fov), team: t.team,
-        rl: t.alive ? r2(clamp(t.cds[0] / t.gunReload(0), 0, 1)) : 0,
-        mb: t.cls.mgs ? t.mgBear.reduce((m, b, i) => m | (b ? 1 << i : 0), 0) : 0 };
+        // reload progress; a magazine gun only shows it while changing magazines (am = rounds left)
+        rl: !t.alive ? 0 : t.cls.guns[0].clip ? (t.magLoad[0] ? r2(clamp(t.cds[0] / t.gunReload(0), 0, 1)) : 0) : r2(clamp(t.cds[0] / t.gunReload(0), 0, 1)),
+        am: t.cls.guns[0].clip ? t.ammo[0] : undefined,
+        mb: t.cls.mgs ? t.mgBear.reduce((m, b, i) => m | (b ? 1 << i : 0), 0) : 0,
+        // MG rounds left, and belt-change progress (1 = just started, 0 = ready)
+        ma: t.cls.mgs ? t.mgAmmo : 0,
+        mr: t.cls.mgs ? t.mgMag.map((v, i) => r2(v / t.cls.mgs[i].mag)) : 0 };
     } else snap.sp = sp;
     return snap;
   }

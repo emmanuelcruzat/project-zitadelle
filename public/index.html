@@ -22,7 +22,10 @@
       <button class="faction de" data-team="de"><canvas width="240" height="180"></canvas><span class="fname">Germany</span></button>
       <button class="faction su" data-team="su"><canvas width="240" height="180"></canvas><span class="fname">Soviet Union</span></button>
     </div>
-    <button id="deploy" class="btn">Deploy</button>
+    <div class="row">
+      <button id="deploy" class="btn">Deploy</button>
+      <button id="infobtn" class="btn secondary">Faction info</button>
+    </div>
     <div id="status"></div>
   </div>
 </div>
@@ -42,6 +45,7 @@
 <!-- battle map controls (choosing a point) -->
 <div id="mapbar" class="mapbar hidden">
   <button id="tohq" class="btn secondary" title="Only between battles">Switch sides (T)</button>
+  <button id="mapinfo" class="btn secondary">Faction info</button>
   <button id="tomenu" class="btn secondary">Main menu</button>
 </div>
 
@@ -50,6 +54,19 @@
   <div class="dphead"><span id="dpname"></span></div>
   <div id="deathpick" class="picker"></div>
 </div>
+
+<!-- faction info: ranks and vehicles of each side (from the start menu or the deploy map) -->
+<div id="info" class="overlay hidden">
+  <div class="panel wide">
+    <div class="infotabs">
+      <button class="de" data-team="de">Germany</button>
+      <button class="su" data-team="su">Soviet Union</button>
+    </div>
+    <div id="infobody"></div>
+    <button id="infoclose" class="btn secondary">Close (Esc)</button>
+  </div>
+</div>
+<div id="infotip" class="infotip hidden"></div>
 
 <script src="shared.js"></script>
 <script src="client.js"></script>
