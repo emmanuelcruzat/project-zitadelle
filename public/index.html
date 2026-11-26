@@ -85,6 +85,13 @@
 </div>
 <div id="infotip" class="infotip hidden"></div>
 
+<!-- chat, lower left: Enter to type, Tab switches team / all, Enter sends, Esc cancels -->
+<div id="chat" class="chat hidden">
+  <div id="chatlog" class="chatlog"></div>
+  <div id="chatbar" class="chatbar hidden"><span id="chatmode" class="chatmode team">TEAM</span><input id="chatinput" maxlength="120" autocomplete="off" spellcheck="false" placeholder="Press TAB to switch channels"></div>
+  <div id="chathint" class="chathint">Press ENTER to chat</div>
+</div>
+
 <script src="shared.js"></script>
 <script src="client.js"></script>
 </body>

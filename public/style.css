@@ -256,3 +256,20 @@ body.end-open .deathcard, body.end-open .deploypanel, body.end-open .mapbar { vi
 @keyframes heroFade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @keyframes heroPop { from { opacity: 0; transform: translateY(10px) scale(0.85); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .infohero.enter * { animation: none !important; } }
+
+/* chat (lower left) */
+.chat { position: fixed; left: 14px; bottom: 14px; z-index: 12; width: min(440px, 62vw); pointer-events: none; }
+.chatlog { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; max-height: 40vh; overflow: hidden; justify-content: flex-end; }
+.chatline { font-size: 14px; line-height: 1.35; color: #ece4c6; text-shadow: 0 1px 2px rgba(0,0,0,.95), 0 0 4px rgba(0,0,0,.7); word-wrap: break-word; transition: opacity .3s; }
+.chatline b { font-weight: 600; }
+.chatline .chtag { color: #9fd18a; font-size: 12px; letter-spacing: 1px; }
+.chatbar { display: flex; align-items: center; gap: 8px; pointer-events: auto;
+  background: rgba(14,14,10,0.82); border: 1px solid #5d5639; padding: 4px 8px; }
+.chatmode { font-size: 12px; letter-spacing: 2px; font-weight: 600; padding: 1px 6px; border: 1px solid currentColor; }
+.chatmode.all { color: #e7dcb1; }
+.chatmode.team { color: #9fd18a; }
+#chatinput { flex: 1; font: inherit; font-size: 14px; background: transparent; border: none; outline: none; color: #f0e8c8; }
+#chatinput::placeholder { color: #6f6a55; }
+/* chat closed: a faint outlined hint where the input bar opens */
+.chathint { border: 1px solid rgba(231,220,177,0.22); background: transparent; padding: 5px 10px;
+  font-size: 13px; letter-spacing: 1px; color: rgba(231,220,177,0.45); }
