@@ -151,9 +151,11 @@ function setSight(on) {
 }
 
 addEventListener('keydown', e => {
-  if (state !== 'play' || showBoard || e.target.tagName === 'INPUT') return;
+  if (state !== 'play' || e.target.tagName === 'INPUT') return;
   const k = e.key.toLowerCase();
-  keys.add(k);
+  keys.add(k);                                   // driving keeps working with the leaderboard up
+  if (k.startsWith('arrow') || k === ' ') e.preventDefault();
+  if (showBoard) return;                         // ...but nothing else does
   if (k === 'f' && !e.repeat) { autofire = !autofire; bigMessage(autofire ? 'Autofire ON' : 'Autofire OFF', 1.2); }
   if (k === 'm' && !e.repeat) { Sound.toggle(); bigMessage(Sound.muted ? 'Sound OFF' : 'Sound ON', 1.2); }
   if (SIGHT_ENABLED && k === 'shift' && !e.repeat) setSight(!view2.sight);
@@ -161,9 +163,18 @@ addEventListener('keydown', e => {
   // minimap size: + / - (main keyboard or numpad)
   if (k === '+' || k === '=') setMinimapScale(minimapScale * 1.15);
   if (k === '-' || k === '_') setMinimapScale(minimapScale / 1.15);
-  if (k.startsWith('arrow') || k === ' ') e.preventDefault();
 });
-addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
+addEventListener('keyup', e => {
+  keys.delete(e.key.toLowerCase());
+  if (e.key.toLowerCase() === 'q' && markWheel) {
+    if (markWheel.sel != null) send({ t: 'mark', x: Math.round(markWheel.wx), y: Math.round(markWheel.wy), c: markWheel.sel });
+    markWheel = null;
+  }
+});
+addEventListener('keydown', e => {
+  if (e.key.toLowerCase() !== 'q' || e.repeat || state !== 'play' || showBoard || e.target.tagName === 'INPUT' || !myTank()) return;
+  markWheel = { sx: mouse.x, sy: mouse.y, wx: cam.x + (mouse.x - W / 2) / cam.scale, wy: cam.y + (mouse.y - H / 2) / cam.scale, sel: null };
+});
 addEventListener('blur', () => { keys.clear(); mouse.down = mouse.rdown = false; });
 canvas.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
 canvas.addEventListener('mousedown', e => {
@@ -488,6 +499,7 @@ function onMessage(m) {
     if (state === 'dead') onTeamChanged();
   }
   if (m.lb) board = m.lb;
+  if (m.on !== undefined) online = m.on;
   sp = m.sp === undefined ? null : m.sp;
   if (m.cp) cps = m.cp;
   if (m.ln) lineDead = m.ln;
@@ -508,6 +520,64 @@ const cam = { x: CENTER, y: CENTER, scale: 1, shake: 0 };
 let msg = { text: '', t: 0, dur: 0 };
 // team: optional side whose emblem is drawn in front of the text
 function bigMessage(text, dur = 2.5, team = null) { msg = { text, t: now, dur, team }; }
+// ---- spotting: hold Q, flick toward a vehicle type, release to mark that spot for your side ----
+const SPOT_LEN = 8;
+let spots = [], markWheel = null;
+function addSpot(e) {
+  spots.push({ x: e.x, y: e.y, c: e.c, by: e.by, t: now });
+  if (spots.length > 12) spots.shift();
+  Sound.tone([988, 740], 0.06, 0.05);
+}
+function drawMarkWheel() {
+  const mw = markWheel;
+  if (!mw) return;
+  if (state !== 'play' || !myTank()) { markWheel = null; return; }
+  const R = 78, r0 = 24, n = CATS.length, dx = mouse.x - mw.sx, dy = mouse.y - mw.sy;
+  // sector under the mouse (first one straight up, going clockwise); dead zone in the middle cancels
+  mw.sel = Math.hypot(dx, dy) < r0 ? null : Math.floor(((Math.atan2(dy, dx) + Math.PI / 2 + Math.PI / n + TAU * 2) % TAU) / (TAU / n));
+  ctx.save();
+  for (let i = 0; i < n; i++) {
+    const a0 = -Math.PI / 2 - Math.PI / n + i * TAU / n, a1 = a0 + TAU / n, on = mw.sel === i;
+    ctx.beginPath(); ctx.arc(mw.sx, mw.sy, on ? R + 6 : R, a0 + 0.03, a1 - 0.03); ctx.arc(mw.sx, mw.sy, r0, a1 - 0.03, a0 + 0.03, true); ctx.closePath();
+    ctx.fillStyle = on ? 'rgba(150,40,30,0.88)' : 'rgba(20,19,14,0.78)'; ctx.fill();
+    ctx.strokeStyle = on ? '#ff8a6a' : 'rgba(231,220,177,0.3)'; ctx.lineWidth = 1.5; ctx.stroke();
+    const am = (a0 + a1) / 2, lr = (R + r0) / 2 + (on ? 3 : 0);
+    hudText(CATS[i].short, mw.sx + Math.cos(am) * lr, mw.sy + Math.sin(am) * lr - 4, on ? 17 : 15, on ? '#fff' : '#e8e0c0');
+    hudText(CATS[i].name.replace(' tank destroyers', ' TD').replace(' tanks', '').replace('Tank destroyers', 'TD'), mw.sx + Math.cos(am) * lr, mw.sy + Math.sin(am) * lr + 11, 9, on ? '#ffd9cf' : '#a99f78', 'center', 400);
+  }
+  ctx.fillStyle = 'rgba(20,19,14,0.85)'; ctx.beginPath(); ctx.arc(mw.sx, mw.sy, r0 - 3, 0, TAU); ctx.fill();
+  hudText(mw.sel == null ? 'MARK' : 'ENEMY', mw.sx, mw.sy, 10, '#ff8a6a', 'center', 600);
+  ctx.restore();
+}
+function drawSpots() {
+  spots = spots.filter(mk => now - mk.t < SPOT_LEN);
+  for (const mk of spots) {
+    const age = now - mk.t, a = clamp(age / 0.2, 0, 1) * clamp((SPOT_LEN - age) / 1.5, 0, 1);
+    let sx = W / 2 + (mk.x - cam.x) * cam.scale, sy = H / 2 + (mk.y - cam.y) * cam.scale;
+    const off = sx < 30 || sx > W - 30 || sy < 30 || sy > H - 30;
+    sx = clamp(sx, 30, W - 30); sy = clamp(sy, 30, H - 30);     // off-screen: pinned to the edge
+    ctx.save(); ctx.globalAlpha = a;
+    if (!off) {   // expanding ping rings on the spot
+      const ring = (age * 1.2) % 1;
+      ctx.strokeStyle = `rgba(235,60,45,${0.7 * (1 - ring)})`; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(sx, sy, 10 + ring * 40, 0, TAU); ctx.stroke();
+    }
+    // red diamond with the vehicle type
+    const s = 13;
+    ctx.fillStyle = 'rgba(190,40,30,0.92)'; ctx.strokeStyle = '#ffd9cf'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(sx, sy - s); ctx.lineTo(sx + s, sy); ctx.lineTo(sx, sy + s); ctx.lineTo(sx - s, sy); ctx.closePath(); ctx.fill(); ctx.stroke();
+    hudText(CATS[mk.c].short, sx, sy + 0.5, CATS[mk.c].short.length > 2 ? 9 : 11, '#fff', 'center', 600);
+    if (off) {    // arrow pointing toward it
+      const ang = Math.atan2(mk.y - cam.y, mk.x - cam.x);
+      ctx.fillStyle = '#ff8a6a'; ctx.beginPath();
+      ctx.moveTo(sx + Math.cos(ang) * (s + 9), sy + Math.sin(ang) * (s + 9));
+      ctx.lineTo(sx + Math.cos(ang + 2.6) * (s + 2), sy + Math.sin(ang + 2.6) * (s + 2));
+      ctx.lineTo(sx + Math.cos(ang - 2.6) * (s + 2), sy + Math.sin(ang - 2.6) * (s + 2)); ctx.closePath(); ctx.fill();
+    }
+    hudText(mk.by, sx, sy + s + 10, 10, '#ffd9cf', 'center', 400);
+    ctx.restore();
+  }
+}
 // ---- combat awards: a short stacked list above the crosshair area ("Armor Destroyed +100") ----
 const AWARD_LEN = 2.6;
 let awards = [];
@@ -538,7 +608,7 @@ function drawAwards() {
 // ---- battle intro: "Die Schlacht beginnt!" / "Бой начинается!" with the side's emblem ----
 const INTRO_LEN = 4.6;
 const INTRO_TEXT = {
-  de: { head: 'Die Schlacht beginnt!', sub: 'DEUTSCHLAND' },
+  de: { head: 'Die Schlacht beginnt!', sub: 'DEUTSCHES REICH' },
   su: { head: 'Бой начинается!', sub: 'СОВЕТСКИЙ СОЮЗ' },
 };
 let intro = null;
@@ -577,6 +647,75 @@ function drawPromo() {
   drawInsignia(ctx, p.team, p.rank, x + 32, y + h / 2, 34 * pop);
   hudText(p.team === 'de' ? 'BEFÖRDERT' : 'ПОВЫШЕНИЕ', x + 62, y + 18, 11, '#d9b46b', 'left', 600);
   hudText(r[1], x + 62, y + 38, 19, '#f2ead0', 'left', 600);
+  ctx.restore();
+}
+// ---- end of battle: SIEG / NIEDERLAGE, ПОБЕДА / ПОРАЖЕНИЕ ----
+const END_WORDS = {
+  de: { win: 'SIEG', lose: 'NIEDERLAGE' },
+  su: { win: 'ПОБЕДА', lose: 'ПОРАЖЕНИЕ' },
+};
+let endScreen = null;   // { w: winning side, t: when it started }
+function drawEndScreen(myTeam) {
+  const [w, secs] = phase, wt = OWNER[w];
+  if (!wt) return;
+  // joined during the break: show it already settled, no entrance animation
+  if (!endScreen || endScreen.w !== wt) endScreen = { w: wt, t: now - 5 };
+  const a = now - endScreen.t, ease = x => 1 - Math.pow(1 - clamp(x, 0, 1), 3);
+  const won = myTeam ? wt === myTeam : true, side = myTeam || wt;
+  const accent = won ? '#f6e27a' : '#e0573f';
+  const cx = W / 2, cy = H * 0.42;
+  ctx.save();
+  // dim with a tinted vignette, letterbox bars
+  const dim = ease(a / 0.6);
+  ctx.fillStyle = `rgba(0,0,0,${0.5 * dim})`; ctx.fillRect(0, 0, W, H);
+  const vg = ctx.createRadialGradient(cx, cy, Math.min(W, H) * 0.15, cx, cy, Math.max(W, H) * 0.75);
+  vg.addColorStop(0, won ? 'rgba(246,226,122,0.10)' : 'rgba(224,87,63,0.10)'); vg.addColorStop(1, 'rgba(0,0,0,0.55)');
+  ctx.globalAlpha = dim; ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1;
+  const bar = H * 0.1 * ease(a / 0.5);
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, bar); ctx.fillRect(0, H - bar, W, bar);
+  // the winner's emblem drops in with a glow
+  const ea = ease((a - 0.2) / 0.7), es = Math.min(W, H) * 0.06 * (1.5 - 0.5 * ea), ey = cy - Math.min(W, H) * 0.16;
+  ctx.globalAlpha = ea;
+  const g = ctx.createRadialGradient(cx, ey, 0, cx, ey, es * 3);
+  g.addColorStop(0, won ? 'rgba(255,236,170,0.4)' : 'rgba(255,120,90,0.3)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, ey, es * 3, 0, TAU); ctx.fill();
+  ctx.save(); ctx.translate(cx, ey); drawFactionMark(ctx, wt, es); ctx.restore();
+  // title in your side's language, settling in from wide letter spacing
+  const ta = ease((a - 0.45) / 0.6), fs = Math.min(W * 0.11, 120);
+  const word = END_WORDS[side][won ? 'win' : 'lose'];
+  ctx.globalAlpha = ta;
+  ctx.font = `600 ${fs}px Oswald, Impact, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  if ('letterSpacing' in ctx) ctx.letterSpacing = `${(1 - ta) * 30 + 6}px`;
+  ctx.lineJoin = 'round'; ctx.lineWidth = fs * 0.1; ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+  ctx.strokeText(word, cx, cy + fs * 0.25);
+  ctx.fillStyle = accent; ctx.fillText(word, cx, cy + fs * 0.25);
+  if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+  // English, then a rule that wipes out from the centre
+  const english = !myTeam ? `${TEAMS[wt].name.toUpperCase()} VICTORIOUS` : won ? 'VICTORY' : 'DEFEAT';
+  ctx.globalAlpha = ease((a - 0.8) / 0.5);
+  hudText(english, cx, cy + fs * 0.85, Math.max(14, fs * 0.17), '#e8e0c0', 'center', 400);
+  const lw = Math.min(W * 0.55, 620) * ease((a - 0.9) / 0.6);
+  ctx.globalAlpha = 1; ctx.fillStyle = accent; ctx.fillRect(cx - lw / 2, cy + fs * 1.08, lw, 2);
+  // how it was won, and your battle
+  const by = cy + fs * 1.08 + 28;
+  ctx.globalAlpha = ease((a - 1.2) / 0.5);
+  hudText(wt === ATTACKER ? `${TEAMS[wt].name} breaks through to ${CAP_POINTS[O_IDX].name}` : `${TEAMS[wt].name} holds the line`,
+    cx, by, 17, '#d9cf9f', 'center', 400);
+  if (you) {
+    ctx.globalAlpha = ease((a - 1.5) / 0.5);
+    const stats = [['SCORE', fmt(you.score || 0)], ['KILLS', String(you.kills || 0)], ['DEATHS', String(you.deaths || 0)]];
+    stats.forEach(([k, v], i) => {
+      const sx = cx + (i - 1) * 120;
+      hudText(v, sx, by + 44, 26, '#f2ead0');
+      hudText(k, sx, by + 68, 11, '#8d8668', 'center', 400);
+    });
+  }
+  // countdown to the next battle: a draining bar above the bottom letterbox
+  ctx.globalAlpha = ease((a - 0.6) / 0.5);
+  const total = Z.ROUND_END || 30, f = clamp(secs / total, 0, 1), cw = Math.min(W * 0.4, 420), cy2 = H - bar - 30;
+  ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(cx - cw / 2, cy2, cw, 3);
+  ctx.fillStyle = accent; ctx.fillRect(cx - cw / 2, cy2, cw * f, 3);
+  hudText(`Next battle in ${secs}s  ·  T — switch sides`, cx, cy2 - 14, 13, '#b9b195', 'center', 400);
   ctx.restore();
 }
 function battleIntro(team) {
@@ -753,7 +892,7 @@ function handleEvent(e) {
     }
     case 'cp': {
       const p = CAP_POINTS[e.i], ours = you && e.t === you.team;
-      const label = `${p.id} · ${p.name}`;
+      const label = `${p.id} (${p.name})`;
       if (you) {
         bigMessage(`${TEAMS[e.t].name} ${e.n ? 'neutralizes' : 'captures'} ${label}`, 3, e.t);
         Sound.tone(ours ? [392, 523, 659] : [440, 349, 262], 0.14, 0.07);
@@ -763,6 +902,7 @@ function handleEvent(e) {
       break;
     }
     case 're':
+      endScreen = { w: e.w, t: now };
       // the winning side's victory song if one has been supplied, otherwise a short fanfare
       if (!Music.play('victory', e.w) && you) Sound.tone(e.w === you.team ? [392, 523, 659, 784] : [392, 330, 262, 196], 0.22, 0.09);
       break;
@@ -801,6 +941,7 @@ function handleEvent(e) {
     case 't': texts.push({ x: e.x, y: e.y, text: e.text, color: e.c, size: e.s, t: now }); break;
     case 'm': bigMessage(e.text, e.d); break;
     case 'aw': addAward(e.l, e.n); break;
+    case 'mk': addSpot(e); break;
     case 'intro': battleIntro(e.t); break;
     case 'sh': cam.shake = Math.min(14, cam.shake + e.a); break;
     case 'die': onPlayerDeath(e); break;
@@ -1624,7 +1765,9 @@ function render() {
   if (mapA > 0) drawDeployMap(mapA);
   if (state === 'dead' && dmap.open && dmap.stage === 'pick') drawDeployButton();
   if (view2.sight && state === 'play') drawSightOverlay();
-  drawHUD();
+  // between battles the end screen replaces the whole HUD (minimap, feed, crosshair...), like the intro does
+  if (phase) drawEndScreen(you ? you.team : null);
+  else { endScreen = null; drawHUD(); }
   drawPromo();
   drawIntro();
   drawBoard();
@@ -1829,33 +1972,24 @@ function drawHUD() {
     ctx.globalAlpha = 1;
   }
   drawAwards();
-
-  // ---- end-of-battle banner ----
-  if (phase) {
-    const [w, secs] = phase, wt = OWNER[w];
-    const title = !myTeam ? `${TEAMS[wt].name.toUpperCase()} VICTORIOUS` : wt === myTeam ? 'VICTORY' : 'DEFEAT';
-    ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, H * 0.36, W, 120);
-    hudText(title, cx, H * 0.36 + 46, 58, !myTeam ? '#f3ead0' : wt === myTeam ? '#f6e27a' : '#e0573f');
-    hudText(`${wt === ATTACKER ? `${TEAMS[wt].name} breaks through to ${CAP_POINTS[CAP_POINTS.length - 1].name}` : `${TEAMS[wt].name} holds the line`} · next battle in ${secs}s · press T to switch sides`,
-      cx, H * 0.36 + 94, 17, '#e8e0c0', 'center', 400);
-  }
+  drawSpots();
+  drawMarkWheel();
 
   if (!(state === 'dead' && dmap.open)) drawMinimap();
-  if (connected) hudText(`${Math.round(ping)} ms`, W - 14, H - minimapSize() - 32, 12, '#e8e0c0', 'right', 400);
+  // connection: players online and ping, top left
+  if (connected) {
+    const pm = Math.round(ping), pc = pm < 80 ? '#7fd46a' : pm < 150 ? '#e6c84a' : '#e0573f';
+    ctx.fillStyle = '#7fd46a'; ctx.beginPath(); ctx.arc(18, 18, 3.5, 0, TAU); ctx.fill();
+    hudText(`${online} online`, 28, 18, 12, '#e8e0c0', 'left', 400);
+    ctx.font = '400 12px Oswald, Impact, sans-serif';
+    const ox = 28 + ctx.measureText(`${online} online`).width + 10;
+    hudText(`${pm} ms`, ox, 18, 12, pc, 'left', 400);
+  }
 
   if (you && state === 'play') {
     const cls = clsByIdx(you.c);
-    const bw = Math.min(420, W - 340), bx = cx - bw / 2, by = H - 64;
-    {
-      ctx.font = '600 30px Oswald, Impact, sans-serif';
-      const nw = ctx.measureText(playerName).width;
-      hudText(playerName, cx + 12, by - 34, 30, '#ffffff');
-      drawInsignia(ctx, you.team, you.rank, cx + 12 - nw / 2 - 16, by - 34, 28);
-    }
-    ctx.fillStyle = 'rgba(0,0,0,0.5)'; rrect(ctx, bx, by - 8, bw, 42, 8); ctx.fill();
-    hudText(`${Z.RANKS[you.team][you.rank || 0][1]}  ·  ${cls.name}  ·  ${cls.role}`, cx, by + 5, 16, '#fff');
-    hudText(`Score ${fmt(you.score || 0)}   ·   Kills ${you.kills}   ·   Deaths ${you.deaths || 0}`, cx, by + 23, 12, '#e8e0c0', 'center', 400);
-    if (autofire) hudText('AUTOFIRE', cx + bw / 2 - 8, by - 34, 13, '#f6e27a', 'right');
+    const by = H - 64;   // anchor for the capture-status readout below
+    if (autofire) hudText('AUTOFIRE', cx, H - 22, 13, '#f6e27a');
 
     const me = myTank();
     // ---- capture status while standing in a zone ----
@@ -1886,6 +2020,15 @@ function drawHUD() {
         if (mine >= 0) ctx.fillRect(cx, sy + 14, (sw / 2 - 2) * mine, 6);
         else ctx.fillRect(cx + (sw / 2 - 2) * mine, sy + 14, -(sw / 2 - 2) * mine, 6);
         ctx.fillStyle = '#fff'; ctx.fillRect(cx - 1, sy + 11, 2, 12);
+        // who's in the circle: your side at the right end of the bar (the way your progress grows), the enemy at the left
+        const enemy = you.team === 'de' ? 'su' : 'de', cnt = t => (t === 'de' ? cps[i][4] : cps[i][5]) || 0;
+        [[you.team, cx + sw / 2 + 16, 'left'], [enemy, cx - sw / 2 - 16, 'right']].forEach(([t, ex, al]) => {
+          const n = cnt(t);
+          ctx.globalAlpha = n ? 1 : 0.45;
+          ctx.save(); ctx.translate(ex, sy + 17); drawFactionMark(ctx, t, 8); ctx.restore();
+          hudText(String(n), ex + (al === 'left' ? 14 : -14), sy + 17, 16, n ? '#f3ead0' : '#8d8668', al, 600);
+          ctx.globalAlpha = 1;
+        });
       }
     }
 
@@ -2011,6 +2154,12 @@ function drawMinimap() {
       ctx.restore();
     }
   }
+  // spotted enemies
+  for (const mk of spots) {
+    const pulse = 0.5 + 0.5 * Math.sin((now - mk.t) * 8);
+    ctx.fillStyle = `rgba(235,60,45,${0.75 + 0.25 * pulse})`;
+    ctx.beginPath(); ctx.arc(x + mk.x * k, y + mk.y * k, 3.5 + pulse * 1.5, 0, TAU); ctx.fill();
+  }
   ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1;
   ctx.strokeRect(x + view.x0 * k, y + view.y0 * k, (view.x1 - view.x0) * k, (view.y1 - view.y0) * k);
   ctx.restore();
@@ -2031,8 +2180,10 @@ function sendInput(dt) {
   const k = c => (keys.has(c) ? 1 : 0);
   const th = (k('w') || k('arrowup')) - (k('s') || k('arrowdown'));
   const rot = (k('d') || k('arrowright')) - (k('a') || k('arrowleft'));
-  const ax = cam.x + (mouse.x - W / 2) / cam.scale, ay = cam.y + (mouse.y - H / 2) / cam.scale;
-  send({ t: 'in', th, rot, ax: Math.round(ax), ay: Math.round(ay), f: (mouse.down || autofire) && !showBoard ? 1 : 0, m: mouse.rdown && !showBoard ? 1 : 0, cx: Math.round(cam.x), cy: Math.round(cam.y) });
+  // while the spotting wheel is open the gun stays laid where it was when Q went down
+  const ax = markWheel ? markWheel.wx : cam.x + (mouse.x - W / 2) / cam.scale;
+  const ay = markWheel ? markWheel.wy : cam.y + (mouse.y - H / 2) / cam.scale;
+  send({ t: 'in', th, rot, ax: Math.round(ax), ay: Math.round(ay), f: (mouse.down || autofire) && !showBoard && !markWheel ? 1 : 0, m: mouse.rdown && !showBoard ? 1 : 0, cx: Math.round(cam.x), cy: Math.round(cam.y) });
 }
 
 // switch sides: only allowed in the break between battles
@@ -2257,7 +2408,7 @@ function drawDeployMap(a) {
 // =====================================================================
 // Leaderboard (hold Tab)
 // =====================================================================
-let board = null, showBoard = false;
+let board = null, showBoard = false, online = 0;
 function drawBoard() {
   if (!showBoard || !board) return;
   // darken everything behind it
@@ -2522,6 +2673,7 @@ function saveSel() {
   try { localStorage.setItem('zitadelle.cls', JSON.stringify(selCls)); } catch (e) { /* ignore */ }
 }
 function updateUI(dt) {
+  document.body.classList.toggle('end-open', !!phase);   // hides the deploy-screen panels behind the end screen
   if (state === 'dead') {
     if (dmap.open) updateDeployMap(dt);
     refreshPicker(ui.deathPicker);
@@ -2573,16 +2725,16 @@ document.getElementById('tomenu').addEventListener('click', () => {
   backToMenu();
 });
 canvas.addEventListener('click', () => {
-  if (state !== 'dead' || !dmap.open || showBoard) return;
+  if (state !== 'dead' || !dmap.open || showBoard || phase) return;
   if (dmap.stage === 'map') { if (dmap.hover && dmap.hover.ok) chooseSpawn(dmap.hover); }
   else if (dmap.stage === 'pick' && overDeployButton(mouse.x, mouse.y)) { if (dmap.canDeploy) deploy(playerTeam); }
   else backToMap();   // zoomed in on a point: clicking anywhere else off the vehicle panel pulls back out
 });
 addEventListener('keydown', e => {
   if (e.key === 'Tab' && e.target.tagName !== 'INPUT') {
-    // the board takes over: let go of everything (driving, firing) until Tab is released
+    // the board takes over the mouse: stop firing until Tab is released (driving carries on)
     e.preventDefault(); showBoard = true; document.body.classList.add('board-open');
-    keys.clear(); mouse.down = mouse.rdown = false;
+    mouse.down = mouse.rdown = false;
   }
   if (showBoard) return;
   if (state !== 'dead' || !dmap.open || e.target.tagName === 'INPUT') return;

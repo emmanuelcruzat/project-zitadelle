@@ -1101,6 +1101,14 @@ function createGame(opts = {}) {
         }
         break;
       // choosing where to deploy: stream the area around the point being looked at
+      // spot an enemy: tell everyone on your side (at most one mark a second per player)
+      case 'mark':
+        if (t && t.alive && phase === 'play' && Number.isInteger(m.c) && m.c >= 0 && m.c < CATS.length && time - (client.lastMark ?? -9) >= 1) {
+          client.lastMark = time;
+          const mk = { e: 'mk', x: r1(num(m.x, 0, WORLD, t.x)), y: r1(num(m.y, 0, WORLD, t.y)), c: m.c, by: t.name };
+          for (const k of tanks) if (k.client && k.team === t.team) pev(k, mk);
+        }
+        break;
       case 'look':
         client.lookX = num(m.x, 0, WORLD, CENTER); client.lookY = num(m.y, 0, WORLD, CENTER);
         break;
@@ -1159,6 +1167,7 @@ function createGame(opts = {}) {
     snap.rs = [reserves.de, reserves.su];
     snap.ph = phase === 'play' ? 0 : [winner === 'de' ? 1 : 2, Math.ceil(phaseEnd - time)];
     // leaderboard: [id, team, name, score, kills, deaths, rank, alive]
+    if (includeBoard) snap.on = clients.size;   // people connected (playing or on the menu)
     if (includeBoard) snap.lb = tanks.map(k => [k.id, TEAM_IDS.indexOf(k.team), k.name, k.score, k.kills, k.deaths, k.rank, k.alive ? 1 : 0]);
     if (t) {
       snap.you = { id: t.id, alive: t.alive ? 1 : 0, score: t.score, rank: t.rank, deaths: t.deaths, c: t.cls.idx, kills: t.kills, fov: r3(t.fov), team: t.team,
