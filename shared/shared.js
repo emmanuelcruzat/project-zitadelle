@@ -79,6 +79,7 @@ const REARS = (() => {
 })();
 const CAP_TIME = 12;               // seconds for one tank to take a point from neutral
 const ROUND_END = 30;              // seconds between battles (the only time you can switch sides)
+const BATTLE_TIME = 20 * 60;       // battle length in seconds; if the clock runs out, the defenders win
 
 // ---------- reserves ----------
 // Every deployment uses one vehicle of its category from the side's reserve pool for the battle.
@@ -90,8 +91,8 @@ const CATS = [
   { key: 'htd', name: 'Heavy tank destroyers', short: 'HTD' },
 ];
 const RESERVES = {
-  de: [60, 200, 60, 100, 40],
-  su: [60, 200, 50, 70, 30],
+  de: [60, 60, 40, 30, 20],      // the attacker's reserves are split evenly between its two attack lines
+  su: [60, 60, 40, 30, 20],
 };
 
 // ---------- realism tuning ----------
@@ -237,7 +238,7 @@ def('t28', { name: 'T-28', tier: 1, hull: [2.4, 1.6], size: 1.05, turretShape: '
   traverse: 2.6, speed: 0.88, hp: 1.15,
   guns: [G({ len: 1.3, w: 0.3, dmg: 1.1, spd: 0.95, pen: 0.95, reload: 1.1, recoil: 1.2 })],
   desc: 'Multi-turret medium. Short 76mm and two MG turrets.' });
-def('t34', { name: 'T-34/76', tier: 0, turretShape: 'hex', turret: 0.58, turretX: 0.18, traverse: 2.8, speed: 1.05,
+def('t34', { name: 'T-34-76', tier: 0, turretShape: 'hex', turret: 0.58, turretX: 0.18, traverse: 2.8, speed: 1.05,
   guns: [G({ len: 1.45, w: 0.29 })],
   desc: 'Sloped armor, wide tracks. Backbone of the Red Army.' });
 def('kv1s', { name: 'KV-1S', tier: 1, hull: [2.15, 1.7], turretShape: 'hex', turret: 0.65, turretX: 0.05, traverse: 2.4,
@@ -639,7 +640,7 @@ const Z = {
   TEAM_IDS, KINDS, enemyOf, viewSize,
   BUILDINGS, HAMLETS, bldCollide, bldHit, bldLine, bldRay,
   CLASSES, CLASS_IDS, START_CLASS, OB, OB_TYPES,
-  ATTACKER, DEFENDER, CAP_R, CAP_POINTS, O_IDX, LINES, CAP_TIME, ROUND_END, CATS, RESERVES,
+  ATTACKER, DEFENDER, CAP_R, CAP_POINTS, O_IDX, LINES, CAP_TIME, ROUND_END, BATTLE_TIME, CATS, RESERVES,
   RELOAD_MULT, DMG_MULT, TRAVERSE_MULT, CASEMATE_ARC, STEER_INFO, mgSummary, ROLES, RANKS, RANK_SCORE, rankForScore, FACTIONS,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = Z;

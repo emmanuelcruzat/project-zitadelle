@@ -5,7 +5,7 @@ const {
   TAU, rand, pick, clamp, lerp, angDiff, turnToward,
   WORLD, CENTER, REARS, TEAM_SIZE, enemyOf, viewSize, bldCollide, bldHit, bldLine,
   CLASSES, CLASS_IDS, START_CLASS, OB, OB_TYPES, TEAM_IDS, KINDS,
-  RANKS, rankForScore, ATTACKER, DEFENDER, CAP_R, CAP_POINTS, O_IDX, LINES, CAP_TIME, ROUND_END, CATS, RESERVES,
+  RANKS, rankForScore, ATTACKER, DEFENDER, CAP_R, CAP_POINTS, O_IDX, LINES, CAP_TIME, ROUND_END, BATTLE_TIME, CATS, RESERVES,
   RELOAD_MULT, DMG_MULT, TRAVERSE_MULT, CASEMATE_ARC,
 } = Z;
 
@@ -41,8 +41,31 @@ function createGame(opts = {}) {
     prev: p.prev, next: p.next, prog: 0, owner: null, contested: false, active: false, canAtt: false, canDef: false, nd: 0, ns: 0 }));
   const sgn = team => (team === 'de' ? 1 : -1);
   const lineDead = { A: false, B: false };
-  const reserves = { de: RESERVES.de.slice(), su: RESERVES.su.slice() };
-  let phase = 'play', phaseEnd = 0, winner = null;
+  // Reserve pools. The attacker has one per attack line (its RESERVES split evenly); a defeated line's
+  // pool is lost with it. The defender has a single pool.
+  let reserves = null;
+  function resetReserves() {
+    reserves = {};
+    for (const team of ['de', 'su']) {
+      reserves[team] = team === ATTACKER
+        ? Object.fromEntries(LINES.map(L => [L, RESERVES[team].map(n => Math.floor(n / LINES.length))]))
+        : { all: RESERVES[team].slice() };
+    }
+  }
+  const poolSum = a => a.reduce((x, y) => x + y, 0);
+  const livePools = team => Object.entries(reserves[team]).filter(([L]) => L === 'all' || !lineDead[L]).map(([, a]) => a);
+  const reserveTotal = team => CATS.map((_, k) => livePools(team).reduce((n, a) => n + a[k], 0));
+  // which pool a deployment at spawn code sp draws from (attacker: the line it's on; O1 or no spawn
+  // given: the surviving line with the most left). Null when there's nothing to draw from.
+  function poolLine(team, sp) {
+    if (reserves[team].all) return 'all';
+    let L = sp != null && sp >= 0 ? points[sp].line : sp != null && sp < 0 && REARS[-1 - sp] ? REARS[-1 - sp].line : null;
+    if (L && !lineDead[L]) return L;
+    const live = LINES.filter(l => !lineDead[l]).sort((a, b) => poolSum(reserves[team][b]) - poolSum(reserves[team][a]));
+    return live[0] || null;
+  }
+  const poolFor = (team, sp) => { const L = poolLine(team, sp); return L ? reserves[team][L] : null; };
+  let phase = 'play', phaseEnd = 0, winner = null, winWhy = 0, battleEnd = BATTLE_TIME;   // winWhy 1 = time ran out
   // Who may fight for each point: the attacker next to a point it holds (working up from X5), the defender
   // next to one it holds (working down from O1). Each side can always retake its own starting points.
   function updateAccess() {
@@ -62,10 +85,10 @@ function createGame(opts = {}) {
       p.owner = p.line && p.k === 0 ? ATTACKER : !p.line ? DEFENDER : null;
       p.prog = p.owner ? sgn(p.owner) : 0; p.contested = false;
     }
-    reserves.de = RESERVES.de.slice(); reserves.su = RESERVES.su.slice();
+    resetReserves();
     updateAccess();
   }
-  const reserveLeft = team => reserves[team].reduce((a, b) => a + b, 0);
+  const reserveLeft = team => poolSum(reserveTotal(team));
   const rearOk = (k, team) => { const r = REARS[k]; return !!r && r.team === team && !(r.line && lineDead[r.line]); };
   const rearsOf = team => REARS.map((r, k) => k).filter(k => rearOk(k, team));
   resetPoints();
@@ -432,8 +455,10 @@ function createGame(opts = {}) {
       else if (spent(ATTACKER)) w = DEFENDER;
       else if (spent(DEFENDER)) w = ATTACKER;
       if (w) forceWin(w);
+      else if (time >= battleEnd) forceWin(DEFENDER, 1);       // the clock ran out: the defenders held
     } else if (time >= phaseEnd) {
-      phase = 'play'; winner = null;
+      phase = 'play'; winner = null; winWhy = 0;
+      battleEnd = time + BATTLE_TIME;
       resetPoints();
       bullets.length = 0;
       for (const t of tanks) {
@@ -445,10 +470,10 @@ function createGame(opts = {}) {
     }
   }
 
-  function forceWin(w) {
-    winner = w;
+  function forceWin(w, why = 0) {
+    winner = w; winWhy = why;
     phase = 'end'; phaseEnd = time + ROUND_END;
-    ev({ e: 're', w: winner });
+    ev({ e: 're', w: winner, why });
   }
 
   // The chosen point is under attack: walk back along the line toward your own side (attackers toward
@@ -484,7 +509,18 @@ function createGame(opts = {}) {
   // Deploy a vehicle from the side's reserves. Falls back to another available vehicle if that category
   // has run dry; returns false (and leaves the tank knocked out) when the side has nothing left.
   function deploy(t, want, sp) {
-    const r = reserves[t.team];
+    // the chosen line has run dry but the other hasn't: deploy at that line's rear instead
+    let r = poolFor(t.team, sp);
+    if ((!r || !poolSum(r)) && t.team === ATTACKER) {
+      const L = poolLine(t.team, null), k = L && L !== 'all' ? REARS.findIndex(q => q.line === L) : -1;
+      if (k >= 0 && poolSum(reserves[t.team][L])) {
+        if (t.client && sp != null) pev(t, { e: 'm', text: `That line is out of reserves — deploying at Rear ${L}`, d: 3.5 });
+        sp = -1 - k; r = reserves[t.team][L];
+      }
+    }
+    // attackers with no spawn given go to the rear of the line they draw from, so the two match
+    if (sp == null && t.team === ATTACKER) { const L = poolLine(t.team, null), k = REARS.findIndex(q => q.line === L); if (k >= 0) sp = -1 - k; }
+    r = r || [0, 0, 0, 0, 0];
     const ok = id => CLASSES[id] && CLASSES[id].faction === t.team && CLASSES[id].enabled && r[CLASSES[id].cat] > 0;
     let id = ok(want) ? want : null;
     if (!id) {
@@ -605,7 +641,8 @@ function createGame(opts = {}) {
   // bots spawn as close as safely possible to somewhere their side needs them
   function botSpawn(team) {
     const opts = points.filter(p => spawnOk(p.i, team)).map(p => ({ c: p.i, x: p.x, y: p.y }))
-      .concat(rearsOf(team).map(k => ({ c: -1 - k, x: REARS[k].x, y: REARS[k].y })));
+      .concat(rearsOf(team).map(k => ({ c: -1 - k, x: REARS[k].x, y: REARS[k].y })))
+      .filter(o => { const r = poolFor(team, o.c); return r && poolSum(r) > 0; });     // only where there's stock
     if (!opts.length) return null;
     const want = wantedPoints(team);
     if (!want.length || Math.random() < 0.2) return pick(opts).c;
@@ -637,8 +674,9 @@ function createGame(opts = {}) {
   }
   // bots drive whatever their side fields, weighted toward gun tanks
   // bots draw from the reserve roughly in proportion to what's left in each category
-  function botClass(team) {
-    const r = reserves[team];
+  function botClass(team, sp) {
+    const r = poolFor(team, sp);
+    if (!r) return null;
     const ids = CLASS_IDS.filter(id => CLASSES[id].faction === team && CLASSES[id].enabled && r[CLASSES[id].cat] > 0);
     if (!ids.length) return null;
     let tot = 0; for (const id of ids) tot += r[CLASSES[id].cat] / ids.filter(j => CLASSES[j].cat === CLASSES[id].cat).length;
@@ -647,8 +685,8 @@ function createGame(opts = {}) {
     return ids[ids.length - 1];
   }
   function respawnBot(t) {
-    const id = botClass(t.team);
-    if (!id || !deploy(t, id, botSpawn(t.team))) { t.alive = false; t.respawnAt = time + 5; return; }
+    const sp = botSpawn(t.team), id = botClass(t.team, sp);
+    if (!id || !deploy(t, id, sp)) { t.alive = false; t.respawnAt = time + 5; return; }
     t.ai = newAi();
   }
   function spawnBot(team) {
@@ -1174,8 +1212,10 @@ function createGame(opts = {}) {
     // conquest state is tiny, so it goes out every snapshot
     snap.cp = points.map(p => [r2(p.prog), p.owner === 'de' ? 1 : p.owner === 'su' ? 2 : 0, p.contested ? 1 : 0, p.active ? 1 : 0, p.nd, p.ns, p.canAtt ? 1 : 0, p.canDef ? 1 : 0]);
     snap.ln = LINES.map(L => (lineDead[L] ? 1 : 0));
-    snap.rs = [reserves.de, reserves.su];
-    snap.ph = phase === 'play' ? 0 : [winner === 'de' ? 1 : 2, Math.ceil(phaseEnd - time)];
+    snap.rs = [reserveTotal('de'), reserveTotal('su')];
+    snap.rl = LINES.map(L => (lineDead[L] ? null : reserves[ATTACKER][L]));
+    snap.ph = phase === 'play' ? 0 : [winner === 'de' ? 1 : 2, Math.ceil(phaseEnd - time), winWhy];
+    if (phase === 'play') snap.bt = Math.max(0, Math.ceil(battleEnd - time));   // battle clock
     // leaderboard: [id, team, name, score, kills, deaths, rank, alive]
     if (includeBoard) snap.on = clients.size;   // people connected (playing or on the menu)
     if (includeBoard) snap.lb = tanks.map(k => [k.id, TEAM_IDS.indexOf(k.team), k.name, k.score, k.kills, k.deaths, k.rank, k.alive ? 1 : 0]);
