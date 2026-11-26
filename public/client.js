@@ -562,6 +562,45 @@ const cam = { x: CENTER, y: CENTER, scale: 1, shake: 0 };
 let msg = { text: '', t: 0, dur: 0 };
 // team: optional side whose emblem is drawn in front of the text
 function bigMessage(text, dur = 2.5, team = null) { msg = { text, t: now, dur, team }; }
+// ---- damage direction: a red arc around your tank on the side a hit came from ----
+const DMG_DIR_LEN = 1.6;
+let dmgDirs = [];
+function addDamageDir(e) {
+  const me = myTank(); if (!me) return;
+  const a = Math.atan2(e.y - me.y, e.x - me.x);
+  // a hit from (nearly) the same direction refreshes that arc instead of stacking another
+  const same = dmgDirs.find(d => Math.abs(angDiff(Math.atan2(d.y - me.y, d.x - me.x), a)) < 0.35);
+  if (same) { same.x = e.x; same.y = e.y; same.t = now; same.s = Math.min(1, same.s + e.s); return; }
+  dmgDirs.push({ x: e.x, y: e.y, t: now, s: e.s });
+  if (dmgDirs.length > 6) dmgDirs.shift();
+}
+function drawDamageDirs() {
+  dmgDirs = dmgDirs.filter(d => now - d.t < DMG_DIR_LEN);
+  const me = myTank();
+  if (!me || state !== 'play' || !dmgDirs.length) return;
+  const cx0 = W / 2 + (me.x - cam.x) * cam.scale, cy0 = H / 2 + (me.y - cam.y) * cam.scale;
+  const R = Math.min(W, H) * 0.2 + me.r * cam.scale;
+  ctx.save(); ctx.lineCap = 'round';
+  for (const d of dmgDirs) {
+    const age = now - d.t, a = Math.atan2(d.y - me.y, d.x - me.x);
+    const alpha = clamp(1 - age / DMG_DIR_LEN, 0, 1) * (0.45 + 0.55 * Math.min(1, d.s * 4));
+    const span = 0.32 + 0.18 * Math.min(1, d.s * 4);            // bigger hits draw a wider arc
+    const pop = 1 + 0.08 * Math.max(0, 1 - age / 0.15);          // a quick swell when it lands
+    // soft outer glow, then the bright core
+    ctx.strokeStyle = `rgba(200,20,10,${0.35 * alpha})`; ctx.lineWidth = 22;
+    ctx.beginPath(); ctx.arc(cx0, cy0, R * pop, a - span, a + span); ctx.stroke();
+    ctx.strokeStyle = `rgba(255,60,40,${0.85 * alpha})`; ctx.lineWidth = 7;
+    ctx.beginPath(); ctx.arc(cx0, cy0, R * pop, a - span * 0.8, a + span * 0.8); ctx.stroke();
+    // small chevron pointing outward at the source
+    const tx = cx0 + Math.cos(a) * (R * pop + 16), ty = cy0 + Math.sin(a) * (R * pop + 16);
+    ctx.fillStyle = `rgba(255,80,60,${0.9 * alpha})`; ctx.beginPath();
+    ctx.moveTo(tx + Math.cos(a) * 9, ty + Math.sin(a) * 9);
+    ctx.lineTo(tx + Math.cos(a + 2.4) * 8, ty + Math.sin(a + 2.4) * 8);
+    ctx.lineTo(tx + Math.cos(a - 2.4) * 8, ty + Math.sin(a - 2.4) * 8);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+}
 // ---- spotting: hold Q, flick toward a vehicle type, release to mark that spot for your side ----
 const SPOT_LEN = 8;
 let spots = [], markWheel = null;
@@ -1005,6 +1044,7 @@ function handleEvent(e) {
     case 'chat': addChat(e); break;
     case 'intro': battleIntro(e.t); break;
     case 'sh': cam.shake = Math.min(14, cam.shake + e.a); break;
+    case 'dh': addDamageDir(e); break;
     case 'die': onPlayerDeath(e); break;
   }
 }
@@ -2137,6 +2177,7 @@ function drawHUD() {
     ctx.globalAlpha = 1;
   }
   drawAwards();
+  drawDamageDirs();
   drawSpots();
   drawMarkWheel();
 

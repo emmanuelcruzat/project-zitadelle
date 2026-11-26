@@ -185,6 +185,9 @@ function createGame(opts = {}) {
       const dealt = Math.min(amt, this.hp);
       this.hp -= amt; this.lastHit = time;
       pev(this, { e: 'sh', a: r1(amt * 0.25) });
+      // where it came from, for the player's damage-direction indicator (not for crashes into your own side)
+      if (this.client && src && src !== this && src.x !== undefined && src.team !== this.team)
+        pev(this, { e: 'dh', x: r1(src.x), y: r1(src.y), s: r2(clamp(amt / this.maxHp, 0, 1)) });
       // remember who did what to us, for damage and assist awards
       if (src && src.kind === 'tank' && src !== this && src.team !== this.team && dealt > 0) {
         let d = this.dmgBy.get(src);
