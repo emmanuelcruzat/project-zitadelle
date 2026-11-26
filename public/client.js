@@ -67,35 +67,45 @@ const TEAMS = {
 // =====================================================================
 // Music: public/music/victory-{de,su}.mp3 and intro-{de,su}.mp3 (or .ogg/.wav/.m4a), if present
 // =====================================================================
-// intro songs are switched off for now (files and code stay in); flip to bring them back
-const INTRO_ENABLED = false;
+// intro songs (set false to switch them off; the files and code stay in)
+const INTRO_ENABLED = true;
+// Songs fade in when they start and fade out before they end. A new song crossfades with the old one.
 const Music = (() => {
-  let files = {}, cur = null, fadeT = null, muted = false;
+  const VOL = { victory: 0.7, intro: 0.35 }, FADE_IN = 2, FADE_END = 3;   // intro sits under the battle sounds
+  let files = {}, cur = null, muted = false;
   fetch('music.json').then(r => r.json()).then(j => { files = j || {}; }).catch(() => {});
-  const stop = () => { if (cur) { cur.pause(); cur = null; } clearInterval(fadeT); };
+  // ramp one track's volume to `to` over `secs`, then optionally stop it
+  function fade(a, to, secs, stopAfter) {
+    clearInterval(a._fadeT);
+    const v0 = a.volume, t0 = performance.now();
+    a._fadeT = setInterval(() => {
+      const k = Math.min(1, (performance.now() - t0) / (Math.max(0.05, secs) * 1000));
+      a.volume = clamp(v0 + (to - v0) * k, 0, 1);
+      if (k >= 1) { clearInterval(a._fadeT); if (stopAfter) { a.pause(); if (cur === a) cur = null; } }
+    }, 40);
+  }
   return {
-    // kind = 'victory' | 'intro'
+    // kind = 'victory' | 'intro'; picks one of that side's songs at random
     play(kind, side) {
       if (kind === 'intro' && !INTRO_ENABLED) return false;
-      const src = files[`${kind}-${side}`];
-      if (!src) return false;
-      stop();
-      cur = new Audio(src);
-      cur.volume = 0.7; cur.muted = muted;
-      cur.play().catch(() => {});
+      const list = [].concat(files[`${kind}-${side}`] || []);
+      if (!list.length) return false;
+      if (cur) fade(cur, 0, 1.2, true);                   // crossfade out whatever was playing
+      const a = new Audio(list[Math.floor(Math.random() * list.length)]);
+      a.volume = 0; a.muted = muted;
+      a.addEventListener('timeupdate', () => {            // ease out before the track ends
+        if (!a._ending && a.duration && a.duration - a.currentTime <= FADE_END) {
+          a._ending = true; fade(a, 0, a.duration - a.currentTime, true);
+        }
+      });
+      a.play().then(() => fade(a, VOL[kind] || 0.6, FADE_IN)).catch(() => {});
+      cur = a;
       return true;
     },
-    // let the song ring out, then fade it over a few seconds once the next battle starts
-    fadeOut(secs = 4) {
-      if (!cur) return;
-      const a = cur, v0 = a.volume, t0 = performance.now();
-      clearInterval(fadeT);
-      fadeT = setInterval(() => {
-        const k = 1 - (performance.now() - t0) / (secs * 1000);
-        if (k <= 0) { a.pause(); if (cur === a) cur = null; clearInterval(fadeT); } else a.volume = v0 * k;
-      }, 50);
-    },
+    // fade the current song out over a few seconds (e.g. once the next battle starts)
+    fadeOut(secs = 4) { if (cur) fade(cur, 0, secs, true); },
     setMuted(m) { muted = m; if (cur) cur.muted = m; },
+    get playing() { return cur ? cur.src : null; },
   };
 })();
 
@@ -148,6 +158,9 @@ addEventListener('keydown', e => {
   if (k === 'm' && !e.repeat) { Sound.toggle(); bigMessage(Sound.muted ? 'Sound OFF' : 'Sound ON', 1.2); }
   if (SIGHT_ENABLED && k === 'shift' && !e.repeat) setSight(!view2.sight);
   if (k === 't' && !e.repeat) switchSides();
+  // minimap size: + / - (main keyboard or numpad)
+  if (k === '+' || k === '=') setMinimapScale(minimapScale * 1.15);
+  if (k === '-' || k === '_') setMinimapScale(minimapScale / 1.15);
   if (k.startsWith('arrow') || k === ' ') e.preventDefault();
 });
 addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
@@ -466,6 +479,9 @@ function onMessage(m) {
   else offset += (sample - offset) * (sample > offset ? 0.2 : 0.02);
 
   you = m.you || null;
+  // promotion: rank went up on the same side (it drops back when a new battle resets scores — no popup then)
+  if (you && promo.lastRank != null && you.team === promo.lastTeam && you.rank > promo.lastRank) promoted(you.team, you.rank);
+  promo.lastRank = you ? you.rank : null; promo.lastTeam = you ? you.team : null;
   // the server has the final say on which side we are on (it refuses switches mid-battle)
   if (you && you.team && you.team !== playerTeam && state !== 'menu') {
     playerTeam = you.team;
@@ -490,7 +506,124 @@ const ostate = new Map();    // per-obstacle hit flash
 const particles = [], texts = [], wrecks = [], feed = [];
 const cam = { x: CENTER, y: CENTER, scale: 1, shake: 0 };
 let msg = { text: '', t: 0, dur: 0 };
-function bigMessage(text, dur = 2.5) { msg = { text, t: now, dur }; }
+// team: optional side whose emblem is drawn in front of the text
+function bigMessage(text, dur = 2.5, team = null) { msg = { text, t: now, dur, team }; }
+// ---- combat awards: a short stacked list above the crosshair area ("Armor Destroyed +100") ----
+const AWARD_LEN = 2.6;
+let awards = [];
+function addAward(label, n) {
+  const last = awards[0];
+  // a stream of small damage awards merges into one line instead of stacking up
+  if (last && last.label === label && label === 'Armor Damaged' && now - last.t < 1.2) { last.n += n; last.t = now; last.bump = now; return; }
+  awards.unshift({ label, n, t: now, bump: now });
+  if (awards.length > 4) awards.length = 4;
+  if (label === 'Armor Destroyed' || label === 'Point Captured') Sound.tone([660, 880], 0.07, 0.05);
+}
+function drawAwards() {
+  awards = awards.filter(a => now - a.t < AWARD_LEN);
+  awards.forEach((a, i) => {
+    const age = now - a.t, big = a.label === 'Armor Destroyed' || a.label === 'Point Captured';
+    const alpha = clamp(age / 0.15, 0, 1) * clamp((AWARD_LEN - age) / 0.5, 0, 1) * (1 - i * 0.18);
+    const pop = 1 + 0.12 * Math.max(0, 1 - (now - a.bump) / 0.15);
+    const y = H * 0.3 + i * 24, size = (big ? 18 : 14) * pop;
+    ctx.globalAlpha = alpha;
+    ctx.font = `600 ${size}px Oswald, Impact, sans-serif`;
+    const label = a.label.toUpperCase(), pts = `+${a.n}`;
+    const lw = ctx.measureText(label + '  ').width, pw = ctx.measureText(pts).width, x0 = W / 2 - (lw + pw) / 2;
+    hudText(label, x0, y, size, big ? '#f2ead0' : '#d6cca3', 'left', 600);
+    hudText(pts, x0 + lw, y, size, a.label.startsWith('Armor Destroyed') ? '#ff5a3c' : '#f6e27a', 'left', 600);
+  });
+  ctx.globalAlpha = 1;
+}
+// ---- battle intro: "Die Schlacht beginnt!" / "Бой начинается!" with the side's emblem ----
+const INTRO_LEN = 4.6;
+const INTRO_TEXT = {
+  de: { head: 'Die Schlacht beginnt!', sub: 'DEUTSCHLAND' },
+  su: { head: 'Бой начинается!', sub: 'СОВЕТСКИЙ СОЮЗ' },
+};
+let intro = null;
+// ---- promotion popup: a small card that drops in under the battle status, then slides away ----
+const PROMO_LEN = 3.8;
+const promo = { lastRank: null, lastTeam: null, show: null };
+function promoted(team, rank) {
+  promo.show = { team, rank, t: now };
+  Sound.tone([523, 659, 784], 0.09, 0.05);       // quiet rising chime
+}
+function drawPromo() {
+  const p = promo.show;
+  if (!p) return;
+  const a = now - p.t;
+  if (a > PROMO_LEN) { promo.show = null; return; }
+  const ease = x => 1 - Math.pow(1 - clamp(x, 0, 1), 3);
+  const inn = ease(a / 0.35), out = clamp((PROMO_LEN - a) / 0.5, 0, 1);
+  const w = 290, h = 58, x = W / 2 - w / 2, y = 92 - 16 * (1 - inn) - 10 * (1 - out);
+  const r = RANKS[p.team][p.rank];
+  if (!r) return;
+  ctx.save();
+  ctx.globalAlpha = inn * out;
+  ctx.fillStyle = 'rgba(20,19,14,0.88)'; rrect(ctx, x, y, w, h, 4); ctx.fill();
+  ctx.strokeStyle = 'rgba(231,220,177,0.35)'; ctx.lineWidth = 1; rrect(ctx, x + 0.5, y + 0.5, w - 1, h - 1, 4); ctx.stroke();
+  ctx.fillStyle = TEAMS[p.team].mini; ctx.fillRect(x, y + 4, 3, h - 8);
+  // a light glint sweeps across the card once it has landed
+  const sw = clamp((a - 0.3) / 0.6, 0, 1);
+  if (sw > 0 && sw < 1) {
+    ctx.save(); rrect(ctx, x, y, w, h, 4); ctx.clip();
+    const gx = x - 60 + (w + 120) * sw, g = ctx.createLinearGradient(gx - 40, 0, gx + 40, 0);
+    g.addColorStop(0, 'rgba(255,245,210,0)'); g.addColorStop(0.5, 'rgba(255,245,210,0.18)'); g.addColorStop(1, 'rgba(255,245,210,0)');
+    ctx.fillStyle = g; ctx.fillRect(x, y, w, h); ctx.restore();
+  }
+  // insignia pops slightly as it lands
+  const pop = 1 + 0.25 * Math.max(0, 1 - Math.abs(a - 0.3) / 0.2);
+  drawInsignia(ctx, p.team, p.rank, x + 32, y + h / 2, 34 * pop);
+  hudText(p.team === 'de' ? 'BEFÖRDERT' : 'ПОВЫШЕНИЕ', x + 62, y + 18, 11, '#d9b46b', 'left', 600);
+  hudText(r[1], x + 62, y + 38, 19, '#f2ead0', 'left', 600);
+  ctx.restore();
+}
+function battleIntro(team) {
+  if (!TEAMS[team] || !INTRO_TEXT[team]) return;
+  intro = { team, t: now };
+  msg = { text: '', t: 0, dur: 0 };   // clear any pending banner so it doesn't sit under the intro
+  Sound.play('boom', 0.55, 0.45, 1.5);          // distant artillery rolling across the steppe
+}
+function drawIntro() {
+  if (!intro) return;
+  const a = now - intro.t;
+  if (a > INTRO_LEN) { intro = null; return; }
+  const ease = x => 1 - Math.pow(1 - clamp(x, 0, 1), 3);
+  const out = clamp((INTRO_LEN - a) / 0.8, 0, 1);              // everything fades over the last 0.8 s
+  const T = INTRO_TEXT[intro.team], col = TEAMS[intro.team].mini;
+  const cx = W / 2, cy = H * 0.44;
+  ctx.save();
+  // dim the field and slide in letterbox bars
+  ctx.fillStyle = `rgba(0,0,0,${0.45 * ease(a / 0.4) * out})`; ctx.fillRect(0, 0, W, H);
+  const bar = H * 0.11 * ease(a / 0.45) * out;
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, bar); ctx.fillRect(0, H - bar, W, bar);
+  // emblem: scales down into place with a soft glow behind it
+  const ea = ease((a - 0.15) / 0.6), es = Math.min(W, H) * 0.075 * (1.6 - 0.6 * ea);
+  ctx.globalAlpha = ea * out;
+  const g = ctx.createRadialGradient(cx, cy - es * 1.9, 0, cx, cy - es * 1.9, es * 2.6);
+  g.addColorStop(0, 'rgba(255,240,200,0.35)'); g.addColorStop(1, 'rgba(255,240,200,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy - es * 1.9, es * 2.6, 0, TAU); ctx.fill();
+  ctx.save(); ctx.translate(cx, cy - es * 1.9); drawFactionMark(ctx, intro.team, es); ctx.restore();
+  // headline: settles in from wide letter spacing
+  const ha = ease((a - 0.45) / 0.55), fs = Math.min(W * 0.072, 92);
+  ctx.globalAlpha = ha * out;
+  ctx.font = `600 ${fs}px Oswald, Impact, sans-serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  if ('letterSpacing' in ctx) ctx.letterSpacing = `${(1 - ha) * 18 + 2}px`;
+  ctx.lineJoin = 'round'; ctx.lineWidth = fs * 0.12; ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+  ctx.strokeText(T.head, cx, cy + fs * 0.35);
+  ctx.fillStyle = '#f2ead0'; ctx.fillText(T.head, cx, cy + fs * 0.35);
+  if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+  // a rule wipes out from the centre, then the faction name and coalition
+  const wa = ease((a - 0.9) / 0.5), lw = Math.min(W * 0.5, 560) * wa;
+  ctx.globalAlpha = out;
+  ctx.fillStyle = col; ctx.fillRect(cx - lw / 2, cy + fs * 0.95, lw, 3);
+  ctx.globalAlpha = ease((a - 1.1) / 0.5) * out;
+  const coal = intro.team === 'de' ? 'Axis' : 'Allies';
+  hudText(`${T.sub}  ·  ${TEAMS[intro.team].name.toUpperCase()}  ·  ${coal.toUpperCase()}`, cx, cy + fs * 0.95 + 26, Math.max(13, fs * 0.2), '#d9cf9f', 'center', 400);
+  ctx.restore();
+}
 let deathInfo = null;
 
 function lerpEnt(a, b, f, angles) {
@@ -622,7 +755,7 @@ function handleEvent(e) {
       const p = CAP_POINTS[e.i], ours = you && e.t === you.team;
       const label = `${p.id} · ${p.name}`;
       if (you) {
-        bigMessage(ours ? `${e.n ? 'Neutralized' : 'Captured'} ${label}` : `Enemy ${e.n ? 'neutralized' : 'captured'} ${label}`, 3);
+        bigMessage(`${TEAMS[e.t].name} ${e.n ? 'neutralizes' : 'captures'} ${label}`, 3, e.t);
         Sound.tone(ours ? [392, 523, 659] : [440, 349, 262], 0.14, 0.07);
       }
       feed.push({ kn: TEAMS[e.t].name, kt: e.t, vn: label, vt: e.n ? null : e.t, sym: e.n ? '⊘' : '⚑', t: now });
@@ -634,7 +767,7 @@ function handleEvent(e) {
       if (!Music.play('victory', e.w) && you) Sound.tone(e.w === you.team ? [392, 523, 659, 784] : [392, 330, 262, 196], 0.22, 0.09);
       break;
     case 'rn':
-      bigMessage('A new battle begins', 3);
+      battleIntro(you ? you.team : playerTeam);
       if (!(you && Music.play('intro', you.team))) Music.fadeOut();
       break;
     case 'ld':
@@ -667,6 +800,8 @@ function handleEvent(e) {
     // personal events
     case 't': texts.push({ x: e.x, y: e.y, text: e.text, color: e.c, size: e.s, t: now }); break;
     case 'm': bigMessage(e.text, e.d); break;
+    case 'aw': addAward(e.l, e.n); break;
+    case 'intro': battleIntro(e.t); break;
     case 'sh': cam.shake = Math.min(14, cam.shake + e.a); break;
     case 'die': onPlayerDeath(e); break;
   }
@@ -1490,6 +1625,8 @@ function render() {
   if (state === 'dead' && dmap.open && dmap.stage === 'pick') drawDeployButton();
   if (view2.sight && state === 'play') drawSightOverlay();
   drawHUD();
+  drawPromo();
+  drawIntro();
   drawBoard();
 }
 function renderWorld() {
@@ -1683,9 +1820,15 @@ function drawHUD() {
   if (msg.text && now - msg.t < msg.dur) {
     const age = now - msg.t;
     ctx.globalAlpha = clamp(msg.dur - age, 0, 1) * clamp(age * 6, 0, 1);
-    hudText(msg.text, cx, H * 0.24, 30, '#f3ead0');
+    if (msg.team && TEAMS[msg.team]) {
+      ctx.font = '600 22px Oswald, Impact, sans-serif';
+      const tw = ctx.measureText(msg.text).width, es = 11, gap = 10, x0 = cx - (tw + es * 2 + gap) / 2;
+      ctx.save(); ctx.translate(x0 + es, H * 0.24); drawFactionMark(ctx, msg.team, es); ctx.restore();
+      hudText(msg.text, x0 + es * 2 + gap, H * 0.24, 22, '#f3ead0', 'left');
+    } else hudText(msg.text, cx, H * 0.24, 22, '#f3ead0');
     ctx.globalAlpha = 1;
   }
+  drawAwards();
 
   // ---- end-of-battle banner ----
   if (phase) {
@@ -1698,7 +1841,7 @@ function drawHUD() {
   }
 
   if (!(state === 'dead' && dmap.open)) drawMinimap();
-  if (connected) hudText(`${Math.round(ping)} ms`, W - 14, H - Math.min(170, W * 0.22) - 32, 12, '#e8e0c0', 'right', 400);
+  if (connected) hudText(`${Math.round(ping)} ms`, W - 14, H - minimapSize() - 32, 12, '#e8e0c0', 'right', 400);
 
   if (you && state === 'play') {
     const cls = clsByIdx(you.c);
@@ -1820,8 +1963,19 @@ function drawHUD() {
   }
 }
 
+// minimap size multiplier, changed with + / - and remembered between visits
+let minimapScale = 1;
+try { minimapScale = clamp(+localStorage.getItem('zitadelle.minimap') || 1, 0.6, 2.2); } catch (e) { /* ignore */ }
+function setMinimapScale(v) {
+  minimapScale = clamp(v, 0.6, 2.2);
+  try { localStorage.setItem('zitadelle.minimap', minimapScale.toFixed(2)); } catch (e) { /* ignore */ }
+}
+const minimapSize = () => Math.min(170 * minimapScale, W * 0.45, H * 0.6);
 function drawMinimap() {
-  const s = Math.min(170, W * 0.22), x = W - s - 12, y = H - s - 12, k = s / WORLD;
+  const s = minimapSize(), x = W - s - 12, y = H - s - 12, k = s / WORLD;
+  ctx.save();
+  const MA = 0.72;   // see the battlefield through it
+  ctx.globalAlpha = MA;
   ctx.fillStyle = 'rgba(40,36,22,0.7)'; ctx.fillRect(x - 3, y - 3, s + 6, s + 6);
   ctx.fillStyle = 'rgba(184,174,121,0.85)'; ctx.fillRect(x, y, s, s);
   ctx.fillStyle = 'rgba(70,58,38,0.6)';
@@ -1833,10 +1987,10 @@ function drawMinimap() {
   drawRoute(ctx, k, x, y, 2);
   CAP_POINTS.forEach((p, i) => {
     const owner = OWNER[(cps[i] || [])[1]];
-    ctx.globalAlpha = cps[i] && cps[i][3] ? 0.95 : 0.45;
+    ctx.globalAlpha = MA * (cps[i] && cps[i][3] ? 0.95 : 0.45);
     ctx.fillStyle = owner ? ptColor(owner) : '#6d6a55';
     ctx.beginPath(); ctx.arc(x + p.x * k, y + p.y * k, Math.max(6, CAP_R * k), 0, TAU); ctx.fill();
-    ctx.globalAlpha = 1;
+    ctx.globalAlpha = MA;
     if (cps[i] && cps[i][2]) {
       ctx.strokeStyle = `rgba(255,90,60,${0.5 + 0.5 * Math.sin(now * 10)})`; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(x + p.x * k, y + p.y * k, Math.max(6, CAP_R * k) + 2, 0, TAU); ctx.stroke();
@@ -1859,6 +2013,7 @@ function drawMinimap() {
   }
   ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1;
   ctx.strokeRect(x + view.x0 * k, y + view.y0 * k, (view.x1 - view.x0) * k, (view.y1 - view.y0) * k);
+  ctx.restore();
 }
 
 // =====================================================================
@@ -2435,6 +2590,7 @@ addEventListener('keydown', e => {
   if (e.key === 'Escape') { if (dmap.stage !== 'map') backToMap(); else if (!you) backToMenu(); }
   if (e.key.toLowerCase() === 't' && !e.repeat) switchSides();
 });
+addEventListener('keydown', e => { if (devMode && e.key === 'F9') { e.preventDefault(); send({ t: 'dev_end', w: you ? you.team : playerTeam }); } });
 addEventListener('keyup', e => { if (e.key === 'Tab') { showBoard = false; document.body.classList.remove('board-open'); } });
 addEventListener('blur', () => { showBoard = false; document.body.classList.remove('board-open'); });
 
