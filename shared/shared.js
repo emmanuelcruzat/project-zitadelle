@@ -129,6 +129,16 @@ function twin(spacing, o) {
   return [G(Object.assign({}, o, { off: -spacing })), G(Object.assign({}, o, { off: spacing, delay: 0.5 }))];
 }
 
+// ---------- nations ----------
+// Only playable nations field vehicles in battle; the rest are defined ahead of time and stay switched off.
+const FACTIONS = {
+  de: { name: 'Germany', coalition: 'Axis', playable: true },
+  su: { name: 'Soviet Union', coalition: 'Allies', playable: true },
+  it: { name: 'Italy', coalition: 'Axis', playable: false },
+  us: { name: 'United States', coalition: 'Allies', playable: false },
+  gb: { name: 'United Kingdom', coalition: 'Allies', playable: false },
+};
+
 const CLASSES = {};
 let FACTION = 'de';
 function def(id, o) {
@@ -281,6 +291,62 @@ def('bm31', { name: 'BM-31-12', tier: 3, style: 'truck', hull: [2.4, 1.35], turr
   guns: rack(12, 0.9, 0.45, { len: 1.15, w: 0.1, reload: 3.0, dmg: 1.6, pen: 1.3, spd: 0.75, spread: 0.13, kind: 'rocket', splash: 1.3, recoil: 0.25, range: 1.3 }),
   desc: '300mm rockets. The big organ.' });
 
+// ---- Italy (not playable yet) ----
+FACTION = 'it';
+def('l640', { name: 'L6/40', tier: 0, hull: [1.7, 1.3], size: 0.84, turretShape: 'box', turret: 0.44, turretX: -0.05,
+  traverse: 4.2, speed: 1.15, hp: 0.68,
+  guns: [G({ len: 1.1, w: 0.15, clip: 8, cycle: 0.3, reload: 2.0, dmg: 0.38, spd: 1.1, pen: 0.55, spread: 0.06, recoil: 0.3 })],
+  desc: 'Light tank with a 20mm Breda autocannon.' });
+def('m1340', { name: 'M13/40', tier: 0, hull: [1.95, 1.4], size: 0.92, turretShape: 'box', turret: 0.52, turretX: 0.05,
+  traverse: 3.0, speed: 0.92, hp: 0.9,
+  guns: [G({ len: 1.35, w: 0.2, reload: 0.6, dmg: 0.75, spd: 1.1, pen: 0.85, recoil: 0.7 })],
+  desc: 'Medium tank with a 47mm gun.' });
+def('p2640', { name: 'P26/40', tier: 2, hull: [2.15, 1.6], turretShape: 'box', turret: 0.62, traverse: 2.6, speed: 0.95, hp: 1.25,
+  guns: [G({ len: 1.55, w: 0.28, dmg: 1.2, spd: 1.1, pen: 1.05, recoil: 1.2 })],
+  desc: 'Heavy tank with a 75mm gun.' });
+def('sem7518', { name: 'Semovente da 75/18', tier: 1, style: 'casemate', hull: [1.95, 1.45], size: 0.92, caseX: 0, caseW: 1.15,
+  traverse: 2.0, hp: 1.0, speed: 0.95,
+  guns: [G({ len: 1.1, w: 0.3, dmg: 1.3, spd: 0.85, pen: 1.2, reload: 1.2, recoil: 1.4, splash: 0.6 })],
+  desc: 'Low assault gun with a short 75mm howitzer.' });
+
+// ---- United States (not playable yet) ----
+FACTION = 'us';
+def('m3stuart', { name: 'M3 Stuart', tier: 0, hull: [1.85, 1.45], size: 0.9, turretShape: 'round', turret: 0.5, turretX: 0.02,
+  traverse: 4.4, speed: 1.3, hp: 0.8,
+  guns: [G({ len: 1.3, w: 0.18, reload: 0.48, dmg: 0.58, spd: 1.15, pen: 0.8, spread: 0.05, recoil: 0.5 })],
+  desc: 'Fast light tank with a 37mm gun.' });
+def('m4sherman', { name: 'M4 Sherman', tier: 1, hull: [2.1, 1.6], turretShape: 'round', turret: 0.62, turretX: 0.05,
+  traverse: 3.4, speed: 1.05, hp: 1.1,
+  guns: [G({ len: 1.5, w: 0.28, dmg: 1.15, spd: 1.1, pen: 1.0 })],
+  desc: 'Reliable medium tank with a 75mm gun and a quick turret.' });
+def('m26', { name: 'M26 Pershing', tier: 3, hull: [2.35, 1.75], size: 1.1, turretShape: 'round', turret: 0.7, turretX: 0.05,
+  traverse: 2.2, speed: 0.92, hp: 1.6,
+  guns: [G({ len: 2.15, w: 0.3, dmg: 2.0, spd: 1.45, pen: 1.75, reload: 1.35, brake: true, recoil: 2, range: 1.3 })],
+  desc: 'Heavy tank with a 90mm gun.' });
+def('m10', { name: 'M10 Wolverine', tier: 2, hull: [2.15, 1.65], turretShape: 'open', turret: 0.66, traverse: 1.7, speed: 1.02,
+  hp: 1.05, fov: 1.3,
+  guns: [G({ len: 2.0, w: 0.25, dmg: 1.6, spd: 1.45, pen: 1.5, reload: 1.2, range: 1.4, recoil: 1.6 })],
+  desc: 'Open-topped tank destroyer with a 3-inch gun.' });
+
+// ---- United Kingdom (not playable yet) ----
+FACTION = 'gb';
+def('tetrarch', { name: 'Tetrarch', tier: 0, hull: [1.75, 1.35], size: 0.86, turretShape: 'box', turret: 0.46,
+  traverse: 4.3, speed: 1.28, hp: 0.72,
+  guns: [G({ len: 1.3, w: 0.17, reload: 0.46, dmg: 0.6, spd: 1.2, pen: 0.85, spread: 0.05, recoil: 0.5 })],
+  desc: 'Airborne light tank with a 2-pounder gun.' });
+def('cromwell', { name: 'Cromwell', tier: 2, hull: [2.15, 1.6], turretShape: 'box', turret: 0.62, turretX: 0.02,
+  traverse: 3.2, speed: 1.3, hp: 1.1,
+  guns: [G({ len: 1.55, w: 0.27, dmg: 1.15, spd: 1.1, pen: 1.0 })],
+  desc: 'Fast cruiser tank with a 75mm gun.' });
+def('churchill', { name: 'Churchill VII', tier: 2, hull: [2.6, 1.7], size: 1.12, turretShape: 'box', turret: 0.62, turretX: 0.12,
+  traverse: 2.4, speed: 0.7, hp: 1.9, ram: 1.5,
+  guns: [G({ len: 1.5, w: 0.28, dmg: 1.15, spd: 1.1, pen: 1.0 })],
+  desc: 'Slow, very heavily armoured infantry tank.' });
+def('achilles', { name: 'Achilles', tier: 3, hull: [2.15, 1.65], turretShape: 'open', turret: 0.66, traverse: 1.7, speed: 1.02,
+  hp: 1.05, fov: 1.4,
+  guns: [G({ len: 2.5, w: 0.26, dmg: 2.3, spd: 1.75, pen: 1.95, reload: 1.4, range: 1.55, recoil: 2, brake: true })],
+  desc: 'The M10 rebuilt with the British 17-pounder.' });
+
 const START_CLASS = { de: 'pz3', su: 't34' };
 // main gun calibre in mm (shell guns): drives the firing sound on clients
 const CALIBRE = {
@@ -288,6 +354,9 @@ const CALIBRE = {
   tiger: 88, ferdinand: 88, tiger2: 88, jagdpanther: 88, jagdtiger: 128, brummbaer: 150,
   t26: 45, bt7: 45, t70: 45, t28: 76, t34: 76, kv1s: 76, su76: 76, kv85: 85, t3485: 85, su85: 85,
   su100: 100, su122: 122, is2: 122, su152: 152, isu152: 152,
+  l640: 20, m1340: 47, p2640: 75, sem7518: 75,
+  m3stuart: 37, m4sherman: 75, m26: 90, m10: 76,
+  tetrarch: 40, cromwell: 75, churchill: 75, achilles: 76,
 };
 for (const id in CALIBRE) for (const g of CLASSES[id].guns) if (g.kind === 'shell') g.mm = CALIBRE[id];
 const CLASS_IDS = Object.keys(CLASSES);
@@ -301,6 +370,10 @@ const MG_TYPES = {
   mg34: { name: 'MG 34', dmg: 0.22, pen: 0.5, reload: 0.09, spread: 0.07, spd: 1.15, range: 0.85, clip: 50, mag: 4 },   // 50-round belt drum
   dt:   { name: 'DT',    dmg: 0.2,  pen: 0.5, reload: 0.1,  spread: 0.07, spd: 1.15, range: 0.85, clip: 63, mag: 4.5 }, // 63-round pan
   dshk: { name: 'DShK',  dmg: 0.38, pen: 0.9, reload: 0.13, spread: 0.06, spd: 1.2,  range: 0.95, clip: 50, mag: 5 },   // 50-round belt box
+  breda38: { name: 'Breda 38', dmg: 0.2, pen: 0.5, reload: 0.12, spread: 0.07, spd: 1.1, range: 0.85, clip: 24, mag: 3.5 }, // 24-round box
+  m1919: { name: 'M1919', dmg: 0.2,  pen: 0.5, reload: 0.1,  spread: 0.07, spd: 1.15, range: 0.85, clip: 50, mag: 4 },     // .30 cal belt
+  m2hb:  { name: 'M2 .50', dmg: 0.38, pen: 0.9, reload: 0.12, spread: 0.06, spd: 1.2,  range: 0.95, clip: 50, mag: 5 },     // .50 cal belt
+  besa:  { name: 'BESA',  dmg: 0.21, pen: 0.5, reload: 0.09, spread: 0.07, spd: 1.15, range: 0.85, clip: 50, mag: 4 },     // 7.92mm belt
 };
 // Mount fields: f = frame it rides on ('hull', or 'turret' = turret / casemate superstructure),
 // x/y = position in tank radii within that frame (+x forward, +y right), b = rest bearing relative
@@ -329,6 +402,14 @@ const MG_FIT = {
   kv85:        c => [BOW('dt', c), REARMG('dt', c)],
   is2:         c => [REARMG('dt', c), ROOF('dshk', -0.36, 0.3)],
   isu152:      c => [ROOF('dshk', -0.3, 0.4)],
+  m1340:       c => [BOW('breda38', c)],
+  m3stuart:    c => [BOW('m1919', c)],
+  m4sherman:   c => [BOW('m1919', c), ROOF('m2hb', -0.3, 0.32)],
+  m26:         c => [BOW('m1919', c), ROOF('m2hb', -0.32, 0.34)],
+  m10:         c => [ROOF('m2hb', -0.4, 0)],
+  achilles:    c => [ROOF('m2hb', -0.4, 0)],
+  cromwell:    c => [BOW('besa', c)],
+  churchill:   c => [BOW('besa', c)],
 };
 for (const id in MG_FIT) CLASSES[id].mgs = MG_FIT[id](CLASSES[id]).map(m => Object.assign({}, MG_TYPES[m.t], m));
 // short card/HUD description, e.g. "Bow MG 34, roof MG 34"
@@ -342,7 +423,7 @@ function mgSummary(c) {
 // neutral: regenerative/electric transmissions that can counter-rotate the tracks and pivot on the spot.
 // clutch:  clutch-brake / simple planetary steering; stationary they can only swing around one braked track.
 // wheel:   halftracks and trucks steer with front wheels, so they must be rolling to turn at all.
-const NEUTRAL_STEER = ['tiger', 'tiger2', 'panther', 'jagdpanther', 'jagdtiger', 'sturmtiger', 'ferdinand'];
+const NEUTRAL_STEER = ['tiger', 'tiger2', 'panther', 'jagdpanther', 'jagdtiger', 'sturmtiger', 'ferdinand', 'cromwell', 'churchill'];
 for (const id of CLASS_IDS) {
   const c = CLASSES[id];
   c.steer = NEUTRAL_STEER.includes(id) ? 'neutral' : c.style === 'halftrack' || c.style === 'truck' ? 'wheel' : 'clutch';
@@ -499,6 +580,12 @@ const RANKS = {
        ['Lt.', 'Leutnant'], ['Oblt.', 'Oberleutnant'], ['Hptm.', 'Hauptmann']],
   su: [['Ml. Sgt.', 'Mladshiy Serzhant'], ['Sgt.', 'Serzhant'], ['St. Sgt.', 'Starshiy Serzhant'], ['Stshn.', 'Starshina'],
        ['Lt.', 'Leytenant'], ['St. Lt.', 'Starshiy Leytenant'], ['Kpt.', 'Kapitan']],
+  it: [['C.le', 'Caporale'], ['C.le Magg.', 'Caporal Maggiore'], ['Serg.', 'Sergente'], ['Serg. Magg.', 'Sergente Maggiore'],
+       ['S.Ten.', 'Sottotenente'], ['Ten.', 'Tenente'], ['Cap.', 'Capitano']],
+  us: [['Pfc.', 'Private First Class'], ['Cpl.', 'Corporal'], ['Sgt.', 'Sergeant'], ['S/Sgt.', 'Staff Sergeant'],
+       ['2nd Lt.', 'Second Lieutenant'], ['1st Lt.', 'First Lieutenant'], ['Capt.', 'Captain']],
+  gb: [['L/Cpl.', 'Lance Corporal'], ['Cpl.', 'Corporal'], ['Sgt.', 'Sergeant'], ['S/Sgt.', 'Staff Sergeant'],
+       ['2nd Lt.', 'Second Lieutenant'], ['Lt.', 'Lieutenant'], ['Capt.', 'Captain']],
 };
 const RANK_SCORE = [Infinity, Infinity, 0, 300, 800, 1600, 3000];
 function rankForScore(s) { let r = 2; for (let i = 3; i < RANK_SCORE.length; i++) if (s >= RANK_SCORE[i]) r = i; return r; }
@@ -512,6 +599,8 @@ const ROLE = {
   stug: 4, brummbaer: 4, su122: 4, su152: 4, isu152: 4, sturmtiger: 5,
   wirbelwind: 6, kugelblitz: 6, zsu37: 6, m17: 6, sdkfz: 7,
   stukafuss: 8, panzerwerfer: 8, katyusha: 8, bm31: 8,
+  l640: 0, m3stuart: 0, tetrarch: 0, m1340: 1, m4sherman: 1, cromwell: 1,
+  p2640: 2, m26: 2, churchill: 2, m10: 3, achilles: 3, sem7518: 4,
 };
 for (const id of CLASS_IDS) { CLASSES[id].roleIdx = ROLE[id]; CLASSES[id].role = ROLES[ROLE[id]]; }
 // reserve category (index into CATS)
@@ -521,6 +610,10 @@ const CAT = {
   tiger: 2, tiger2: 2, kv1s: 2, kv85: 2, is2: 2,
   stug: 3, hetzer: 3, jgpz4: 3, su76: 3, su85: 3,
   ferdinand: 4, jagdpanther: 4, brummbaer: 4, jagdtiger: 4, su122: 4, su152: 4, isu152: 4, su100: 4,
+  l640: 0, m3stuart: 0, tetrarch: 0,
+  m1340: 1, m4sherman: 1, cromwell: 1,
+  p2640: 2, m26: 2, churchill: 2,
+  sem7518: 3, m10: 3, achilles: 3,
 };
 for (const id of CLASS_IDS) CLASSES[id].cat = CAT[id] !== undefined ? CAT[id] : -1;
 // For now only gun vehicles are in play: anything whose main armament is all MGs / autocannon or rockets
@@ -528,7 +621,7 @@ for (const id of CLASS_IDS) CLASSES[id].cat = CAT[id] !== undefined ? CAT[id] : 
 const GUNS_ONLY = true;
 for (const id of CLASS_IDS) {
   const c = CLASSES[id];
-  c.enabled = (!GUNS_ONLY || c.guns.some(g => g.kind === 'shell')) && c.cat >= 0;
+  c.enabled = FACTIONS[c.faction].playable && (!GUNS_ONLY || c.guns.some(g => g.kind === 'shell')) && c.cat >= 0;
 }
 
 // ---------- obstacles ----------
@@ -547,7 +640,7 @@ const Z = {
   BUILDINGS, HAMLETS, bldCollide, bldHit, bldLine, bldRay,
   CLASSES, CLASS_IDS, START_CLASS, OB, OB_TYPES,
   ATTACKER, DEFENDER, CAP_R, CAP_POINTS, O_IDX, LINES, CAP_TIME, ROUND_END, CATS, RESERVES,
-  RELOAD_MULT, DMG_MULT, TRAVERSE_MULT, CASEMATE_ARC, STEER_INFO, mgSummary, ROLES, RANKS, RANK_SCORE, rankForScore,
+  RELOAD_MULT, DMG_MULT, TRAVERSE_MULT, CASEMATE_ARC, STEER_INFO, mgSummary, ROLES, RANKS, RANK_SCORE, rankForScore, FACTIONS,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = Z;
 else root.Z = Z;

@@ -60,6 +60,12 @@ const TEAMS = {
         bullet: '#ece8d4', mini: '#a7b8c4', tint: 'rgba(60,74,86,0.20)', label: 'GERMANY' },
   su: { id: 'su', name: 'Soviet Union', body: '#5f7738', dark: '#374520', barrel: '#4c5f2c', top: '#6a8340',
         bullet: '#f2c95c', mini: '#9cc05a', tint: 'rgba(150,40,30,0.13)', label: 'SOVIET UNION' },
+  it: { id: 'it', name: 'Italy', body: '#b39f6e', dark: '#6d5f3c', barrel: '#8f8058', top: '#bfae7c',
+        bullet: '#ece2c4', mini: '#d8c48a', tint: 'rgba(150,120,60,0.15)', label: 'ITALY' },
+  us: { id: 'us', name: 'United States', body: '#59613a', dark: '#353a22', barrel: '#4b5231', top: '#646d42',
+        bullet: '#ece8d4', mini: '#a3b06e', tint: 'rgba(70,80,40,0.15)', label: 'UNITED STATES' },
+  gb: { id: 'gb', name: 'United Kingdom', body: '#5e6446', dark: '#373b28', barrel: '#4d523a', top: '#696f4f',
+        bullet: '#ece8d4', mini: '#b8bc8e', tint: 'rgba(80,80,60,0.15)', label: 'UNITED KINGDOM' },
   x: { id: 'x', bullet: '#e3e1d9', dark: '#555555' },
   wreck: { id: 'wreck', body: '#3d3832', dark: '#211e1a', barrel: '#2f2b27', top: '#46403a' },
 };
@@ -1104,6 +1110,22 @@ function drawFactionMark(c, team, s) {   // hull marking: Balkenkreuz or red sta
     c.closePath();
     c.fillStyle = '#c8322a'; c.fill();
     const lw = c.lineWidth; c.lineWidth = Math.max(1, s * 0.14); c.strokeStyle = '#f2f2ea'; c.stroke(); c.lineWidth = lw;
+  } else if (team === 'it') {       // red shield with a white cross (arms of Savoy)
+    c.beginPath(); c.moveTo(-s * 0.8, -s); c.lineTo(s * 0.8, -s); c.lineTo(s * 0.8, s * 0.2);
+    c.quadraticCurveTo(s * 0.8, s * 0.8, 0, s); c.quadraticCurveTo(-s * 0.8, s * 0.8, -s * 0.8, s * 0.2); c.closePath();
+    c.fillStyle = '#b82a2a'; c.fill();
+    c.lineWidth = Math.max(1, s * 0.1); c.strokeStyle = '#2a6b3c'; c.stroke();
+    c.fillStyle = '#f2f2ea'; c.fillRect(-s * 0.16, -s * 0.8, s * 0.32, s * 1.5); c.fillRect(-s * 0.62, -s * 0.28, s * 1.24, s * 0.32);
+  } else if (team === 'us') {       // white star in a white ring
+    c.beginPath(); c.arc(0, 0, s, 0, TAU); c.lineWidth = Math.max(1, s * 0.14); c.strokeStyle = '#f2f2ea'; c.stroke();
+    c.beginPath();
+    for (let i = 0; i < 10; i++) { const rr = i % 2 ? s * 0.33 : s * 0.82, a = -Math.PI / 2 + i * Math.PI / 5; c.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+    c.closePath(); c.fillStyle = '#f2f2ea'; c.fill();
+  } else if (team === 'gb') {       // white-red-white recognition flash
+    const w = s * 0.62, h = s * 1.5;
+    c.fillStyle = '#f2f2ea'; c.fillRect(-w * 1.5, -h / 2, w, h); c.fillRect(w * 0.5, -h / 2, w, h);
+    c.fillStyle = '#b82a2a'; c.fillRect(-w * 0.5, -h / 2, w, h);
+    c.lineWidth = 1; c.strokeStyle = 'rgba(0,0,0,0.4)'; c.strokeRect(-w * 1.5, -h / 2, w * 3, h);
   }
 }
 
@@ -1840,6 +1862,41 @@ function drawInsignia(c, team, rank, x, y, s) {
       if (rank >= 5) pip(x, y + s * 0.05, s * 0.075, '#e8c34a');
       if (rank >= 6) pip(x, y + s * 0.3, s * 0.075, '#e8c34a');
     }
+  } else if (team === 'it' || team === 'us' || team === 'gb') {
+    // chevrons (up for the US, down for the British and Italians) for NCOs; bars, pips or stars for officers
+    const chev = (n, up, col, y1) => {
+      for (const [lw, cc] of [[s * 0.24, 'rgba(0,0,0,0.75)'], [s * 0.12, col]]) {
+        c.strokeStyle = cc; c.lineWidth = lw;
+        for (let k = 0; k < n; k++) {
+          const yy = y1 + k * s * 0.24, d = up ? -1 : 1;
+          c.beginPath(); c.moveTo(x - s * 0.34, yy - d * s * 0.14); c.lineTo(x, yy + d * s * 0.14); c.lineTo(x + s * 0.34, yy - d * s * 0.14); c.stroke();
+        }
+      }
+    };
+    if (rank <= 3) {
+      if (team === 'us') {
+        chev(rank === 0 ? 1 : rank === 1 ? 2 : 3, true, '#c9c08a', y - s * 0.3);
+        if (rank === 3) { c.strokeStyle = '#c9c08a'; c.lineWidth = s * 0.12; c.beginPath(); c.arc(x, y + s * 0.05, s * 0.36, 0.25 * Math.PI, 0.75 * Math.PI); c.stroke(); }
+      } else if (team === 'gb') {
+        chev(rank === 0 ? 1 : rank === 1 ? 2 : 3, false, '#e8e2c8', y - s * 0.18);
+        if (rank === 3) { c.fillStyle = '#d9b24a'; c.beginPath(); c.arc(x, y - s * 0.42, s * 0.12, Math.PI, 0); c.lineTo(x + s * 0.12, y - s * 0.34); c.lineTo(x - s * 0.12, y - s * 0.34); c.closePath(); c.fill(); }
+      } else {   // Italy: red chevrons for corporals, gold for sergeants
+        chev(rank % 2 === 0 ? 1 : 2, false, rank <= 1 ? '#c0392b' : '#d9b24a', y - s * 0.12);
+      }
+    } else {
+      strap(team === 'it' ? '#8a8a6a' : team === 'us' ? '#6b6a4a' : '#7b7650', team === 'it' ? '#5c5c44' : '#3f3e2c');
+      const n = rank - 3;
+      if (team === 'us') {     // gold bar, silver bar, two silver bars
+        const col = rank === 4 ? '#d9b24a' : '#d4d6d2';
+        for (let k = 0; k < (rank === 6 ? 2 : 1); k++) { c.fillStyle = col; c.fillRect(x - w * 0.18, y - s * 0.05 + k * s * 0.24, w * 0.36, s * 0.16); }
+      } else {                 // British pips / Italian stars, one to three
+        for (let k = 0; k < n; k++) {
+          const py = y + s * 0.3 - k * s * 0.24;
+          if (team === 'gb') { c.fillStyle = '#d9b24a'; c.beginPath(); c.moveTo(x, py - s * 0.09); c.lineTo(x + s * 0.09, py); c.lineTo(x, py + s * 0.09); c.lineTo(x - s * 0.09, py); c.closePath(); c.fill(); }
+          else { c.fillStyle = '#d4d6d2'; c.beginPath(); for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? s * 0.04 : s * 0.1; c.lineTo(x + Math.cos(a) * rr, py + Math.sin(a) * rr); } c.closePath(); c.fill(); }
+        }
+      }
+    }
   } else {
     strap('#8a8455', '#b5282c');
     c.strokeStyle = '#b5282c';
@@ -2464,6 +2521,15 @@ const FACTION_INFO = {
   su: { coalition: 'Allies', desc: 'Warned of the coming attack, the Red Army turned the Kursk salient into one of the most heavily '
     + 'fortified battlefields in history, with deep belts of minefields, anti-tank guns and dug-in tanks. Once the German '
     + 'assault had been worn down, Soviet counter-offensives seized the initiative on the Eastern Front for the rest of the war.' },
+  it: { coalition: 'Axis', desc: 'Germany\'s main European ally. Italian armour had been designed for the deserts of North Africa '
+    + 'and was thinly protected and under-gunned by 1943. On 10 July 1943, days into Operation Citadel, the Allies landed in '
+    + 'Sicily; the threat helped persuade Hitler to call off the Kursk offensive, and Mussolini was overthrown before the month was out.' },
+  us: { coalition: 'Allies', desc: 'American factories built armour on a scale no other nation matched, nearly 50,000 Shermans '
+    + 'alone, and Lend-Lease sent thousands of tanks to Britain and the Soviet Union. In July 1943, while the battle of Kursk was '
+    + 'being fought, US troops landed in Sicily alongside the British.' },
+  gb: { coalition: 'Allies', desc: 'Britain fielded both fast cruiser tanks and slow, heavily armoured infantry tanks, and shipped '
+    + 'thousands of tanks to the Soviet Union on the Arctic convoys; British-built Churchills fought with the Red Army at Kursk. '
+    + 'In July 1943 British and Commonwealth troops landed in Sicily with the Americans.' },
 };
 // coalition badge: a shield. Axis: black with a silver rim and a gold bar; Allies: olive with the white Allied star.
 function drawCoalitionBadge(c, coalition, w, h) {
@@ -2519,6 +2585,18 @@ const VEHICLE_HISTORY = {
   su122: 'An assault gun on the T-34 chassis with a 122mm M-30 howitzer for infantry support. It fought at Kursk, and production gave way to the SU-85 later in 1943.',
   su152: 'Built in weeks in early 1943 by mounting a 152mm ML-20 gun-howitzer on the KV-1S chassis. Its success against German heavy armour at Kursk earned it the nickname Zveroboy, "beast killer".',
   isu152: 'The 152mm gun-howitzer on the heavier IS chassis, from late 1943. Used as a heavy assault gun, tank destroyer and bunker buster, and kept in service long after the war.',
+  l640: 'Italy\'s last light tank, in service from 1941 with a 20mm Breda autocannon. Too lightly armoured for front-line fighting by 1943; about 280 were built.',
+  m1340: 'The most numerous Italian tank of the war, with a 47mm gun and riveted armour. Effective in the early desert battles, but cramped, slow and outclassed by 1942.',
+  p2640: 'Italy\'s heaviest tank, with a 75mm gun. Only a handful were ready before the armistice of September 1943; most were completed and used by German forces.',
+  sem7518: 'A low assault gun with a short 75mm howitzer on the M13/40-family chassis. Built as a stop-gap, it became one of Italy\'s most effective armoured vehicles in North Africa.',
+  m3stuart: 'American light tank with a 37mm gun, valued for its speed and reliability; British crews nicknamed it the "Honey". Thousands went to Britain and the Soviet Union under Lend-Lease.',
+  m4sherman: 'The main American tank of the war, with nearly 50,000 built. Reliable, easy to maintain and quick to bring its gun to bear, it equipped the US, British, Soviet and many other armies.',
+  m26: 'Heavy tank with a 90mm gun, rushed to Europe in early 1945 to counter the Tiger and Panther. Only a few hundred reached the front before the war ended.',
+  m10: 'Tank destroyer on the Sherman chassis with a 3-inch gun in an open-topped turret, in service from 1942. It traded armour for speed and a powerful gun.',
+  tetrarch: 'Light tank with a 2-pounder gun, later adapted to be carried into battle by glider. Tetrarchs landed with British airborne troops in Normandy in June 1944.',
+  cromwell: 'Fast British cruiser tank with a 75mm gun, in service from 1944. Its Meteor engine, derived from the Spitfire\'s Merlin, made it one of the fastest tanks of the war.',
+  churchill: 'Heavily armoured infantry tank built to climb rough ground and obstacles; the Mark VII had up to 152mm of frontal armour. Churchills sent to the Soviet Union fought at Kursk.',
+  achilles: 'The British conversion of the American M10 with the 17-pounder, one of the few Allied guns that could defeat the Tiger and Panther from the front at range.',
 };
 function placeInfoTip(x, y) {
   const t = ui.infotip, w = t.offsetWidth, h = t.offsetHeight;
@@ -2526,7 +2604,7 @@ function placeInfoTip(x, y) {
   t.style.top = (y + 18 + h > innerHeight - 8 ? y - h - 12 : y + 18) + 'px';
 }
 const infoOpen = () => !ui.info.classList.contains('hidden');
-function openInfo(team) { ui.info.classList.remove('hidden'); showInfo(team === 'su' ? 'su' : 'de'); }
+function openInfo(team) { ui.info.classList.remove('hidden'); showInfo(Z.FACTIONS[team] ? team : 'de'); }
 function closeInfo() { ui.info.classList.add('hidden'); ui.infotip.classList.add('hidden'); }
 function showInfo(team) {
   ui.info.querySelectorAll('.infotabs button').forEach(b => b.classList.toggle('sel', b.dataset.team === team));
@@ -2535,7 +2613,7 @@ function showInfo(team) {
   let html = `<div class="infohead">
     <canvas width="160" height="160" data-mark="${team}"></canvas>
     <div class="infotext">
-      <div class="infoname">${escapeHtml(TEAMS[team].name)}</div>
+      <div class="infoname">${escapeHtml(TEAMS[team].name)}${Z.FACTIONS[team].playable ? '' : '<span class="infosoon">Not yet playable</span>'}</div>
       <div class="infocoal"><canvas width="64" height="72" data-coal="${F.coalition}"></canvas>${F.coalition}</div>
       <p>${escapeHtml(F.desc)}</p>
     </div>
@@ -2554,7 +2632,8 @@ function showInfo(team) {
   // vehicles by category; hover one for a little of its real history
   html += '<div class="infosec">Vehicles</div>';
   CATS.forEach((cat, ci) => {
-    const ids = sideClasses(team).filter(id => CLASSES[id].cat === ci);
+    const ids = Z.FACTIONS[team].playable ? sideClasses(team).filter(id => CLASSES[id].cat === ci)
+      : CLASS_IDS.filter(id => CLASSES[id].faction === team && CLASSES[id].cat === ci);
     if (!ids.length) return;
     html += `<div class="infocat">${escapeHtml(cat.name)}</div><div class="infoveh">`;
     for (const id of ids) html += `<div data-id="${id}"><canvas width="320" height="240" data-veh="${id}"></canvas>${escapeHtml(CLASSES[id].name)}</div>`;
