@@ -26,7 +26,7 @@ const validClass = (id, team) => (CLASSES[id] && CLASSES[id].faction === team &&
 // score awards
 // kill: Armor Destroyed; assist: Armor Destroyed Assist (dealt >= ASSIST_SHARE of the tank's health in the
 // last ASSIST_WINDOW s); damage: Armor Damaged, paid in DAMAGE_STEP chunks, worth this much per whole tank's health
-const SCORE = { kill: 100, assist: 50, damage: 60, capture: 150, neutral: 50 };
+const SCORE = { kill: 100, assist: 50, damage: 60, capture: 150, neutral: 50, infantry: 10 };
 const ASSIST_SHARE = 0.15, ASSIST_WINDOW = 30, DAMAGE_STEP = 0.1;
 
 function createGame(opts = {}) {
@@ -351,6 +351,8 @@ function createGame(opts = {}) {
     if (src && src.kind === 'tank') {
       kn = src.name; kt = src.team; kc = src.cls.name;
       if (src.team !== t.team) { src.award('Armor Destroyed', SCORE.kill); src.kills++; }
+    } else if (src && src.kind === 'inf') {
+      kn = 'Infantry'; kt = src.team; kc = 'Anti-tank weapon';
     } else if (src && src.kind === 'ob') {
       kn = src.type === 'bunker' ? 'Pillbox' : 'Fuel drum';
     }
@@ -378,9 +380,12 @@ function createGame(opts = {}) {
 
   function updatePoints(dt) {
     for (const p of points) {
-      let nd = 0, ns = 0;
+      let nd = 0, ns = 0, id = 0, is = 0;
       for (const t of tanks) if (t.alive && inZone(t, p)) { if (t.team === 'de') nd++; else ns++; }
-      p.nd = nd; p.ns = ns;
+      for (const m of infantry) if (!m.dead && inZone(m, p)) { if (m.team === 'de') id++; else is++; }
+      p.nd = nd; p.ns = ns; p.nid = id; p.nis = is;
+      // infantry count for a fraction of a tank each
+      const ed = nd + id * INF.capWeight, es = ns + is * INF.capWeight;
       if (!p.active) {
         // locked: nobody can fight for it until a neighbouring point changes hands
         p.contested = false;
@@ -389,13 +394,13 @@ function createGame(opts = {}) {
       }
       // whoever has more vehicles in the zone pushes it their way (faster the bigger the margin);
       // equal numbers freeze it
-      p.contested = nd > 0 && ns > 0 && nd === ns;
+      p.contested = ed > 0 && es > 0 && ed === es;
       if (p.contested || phase !== 'play') continue;
       // the bigger side pushes, but only if it's allowed to fight for this point (or is defending its own)
-      const big = nd > ns ? 'de' : nd < ns ? 'su' : null;
+      const big = ed > es ? 'de' : ed < es ? 'su' : null;
       const may = big && (big === p.owner || (big === ATTACKER ? p.canAtt : p.canDef));
       if (may) {
-        p.prog = clamp(p.prog + sgn(big) * capRate(Math.abs(nd - ns)) * dt, -1, 1);
+        p.prog = clamp(p.prog + sgn(big) * capRate(Math.abs(ed - es)) * dt, -1, 1);
       } else {
         // an abandoned half-taken point drifts back to whoever holds it
         const home = p.owner ? sgn(p.owner) : 0;
@@ -435,6 +440,7 @@ function createGame(opts = {}) {
     } else if (time >= phaseEnd) {
       phase = 'play'; winner = null;
       resetPoints();
+      resetInfantry();
       bullets.length = 0;
       for (const t of tanks) {
         t.score = t.kills = t.deaths = 0;
@@ -544,6 +550,11 @@ function createGame(opts = {}) {
 
   function explode(x, y, rad, dmg, team, src, self) {
     ev({ e: 'x', x: r1(x), y: r1(y), s: r1(rad * 0.55) });
+    for (const m of infantry) {
+      if (m.dead || (team && m.team === team)) continue;
+      const d = Math.hypot(m.x - x, m.y - y) - m.r;
+      if (d < rad) hurtSoldier(m, dmg * (1 - Math.max(0, d) / rad * 0.6), src);
+    }
     for (const t of tanks) {
       if (!t.alive || (team && t.team === team)) continue;
       const d = Math.hypot(t.x - x, t.y - y) - t.r;
@@ -575,6 +586,7 @@ function createGame(opts = {}) {
     };
     for (const o of obstacles) if (!o.dead) ins(o);
     for (const t of tanks) if (t.alive) ins(t);
+    for (const m of infantry) if (!m.dead) ins(m);
   }
   const gridAt = (x, y) => grid[clamp((y / CELL) | 0, 0, GN - 1) * GN + clamp((x / CELL) | 0, 0, GN - 1)];
 
@@ -695,6 +707,11 @@ function createGame(opts = {}) {
         const soft = e.cls.style === 'halftrack' || e.cls.style === 'truck';
         const s = d * (soft ? 0.5 : 1);
         if (s < bs) { bs = s; best = e; }
+      }
+      for (const e of infantry) {
+        if (e.dead || e.team === t.team) continue;
+        const d = Math.hypot(e.x - t.x, e.y - t.y);
+        if (d < MG_RANGE && d * 0.8 < bs) { bs = d * 0.8; best = e; }
       }
       // nothing to shoot at: rake nearby supplies
       if (!best && ai.ob && !ai.ob.dead && Math.hypot(ai.ob.x - t.x, ai.ob.y - t.y) < 420) best = ai.ob;
@@ -850,6 +867,7 @@ function createGame(opts = {}) {
     gridBuild();
     for (const t of tanks) if (t.alive && t.isBot) botThink(t, dt);
     for (const t of tanks) if (t.alive) t.update(dt);
+    updateInfantry(dt);
 
     // tank <-> tank
     for (let i = 0; i < tanks.length; i++) {
@@ -962,6 +980,17 @@ function createGame(opts = {}) {
       let dead = false;
       for (const e of gridAt(b.x, b.y)) {
         if (b.hits.includes(e.id)) continue;
+        if (e.kind === 'inf') {      // soldiers: any round kills or wounds, MG rounds can go through one
+          if (e.dead || e.team === b.team) continue;
+          const dx = e.x - b.x, dy = e.y - b.y, rr = e.r + b.r;
+          if (dx * dx + dy * dy > rr * rr) continue;
+          b.hits.push(e.id);
+          hurtSoldier(e, b.dmg, b.owner);
+          if (b.splash) { explode(b.x, b.y, b.splash, b.dmg * 0.6, b.team, b.owner); dead = true; break; }
+          b.hp -= 3;
+          if (b.hp <= 0) { dead = true; break; }
+          continue;
+        }
         if (e.kind === 'tank') { if (!e.alive || e.team === b.team || e === b.owner) continue; }
         else if (e.dead || b.team === 'x') continue;
         const dx = e.x - b.x, dy = e.y - b.y, rr = e.r + b.r;
@@ -1010,6 +1039,188 @@ function createGame(opts = {}) {
       }
     }
     for (let i = bullets.length - 1; i >= 0; i--) if (bullets[i].hp <= 0) bullets.splice(i, 1);
+  }
+
+  // =====================================================================
+  // Infantry (prototype): AI rifle squads, each with one anti-tank soldier
+  // =====================================================================
+  // Squads walk to the points their side is fighting for and spread out there. Riflemen shoot enemy
+  // infantry (hit chance falls with range) and scatter from tanks that get close; the anti-tank soldier
+  // closes on enemy tanks and fires a short-range rocket that uses the normal armour rules, then reloads.
+  // Soldiers die to shells, splash, MGs and being run over. Each one counts as a quarter of a tank when
+  // capturing. A wiped-out squad comes back after a while; every squad resets when a new battle starts.
+  const INF = {
+    squads: 4, size: 6, speed: 44, hp: 6, r: 6,
+    rifleRange: 520, rifleDmg: 3.5, rifleCd: [1.4, 2.4],
+    atRange: 260, atSeek: 460, atCd: 14, atDmg: 55, atSpd: 380,
+    fearR: 170, capWeight: 0.25, respawn: 25,
+  };
+  const infantry = [], squads = [];
+  function spawnSquad(sq) {
+    for (const m of sq.members) { const i = infantry.indexOf(m); if (i >= 0) infantry.splice(i, 1); }
+    const code = botSpawn(sq.team);
+    let cx, cy, spread;
+    if (code == null) { const rr = REARS.find(q => q.team === sq.team); cx = rr.x; cy = rr.y; spread = 220; }
+    else if (code >= 0) { cx = points[code].x; cy = points[code].y; spread = points[code].r * 0.5; }
+    else { cx = REARS[-1 - code].x; cy = REARS[-1 - code].y; spread = 220; }
+    sq.members = [];
+    for (let i = 0; i < INF.size; i++) {
+      let x, y, tries = 0;
+      do {
+        const a = rand(0, TAU), d = Math.sqrt(Math.random()) * spread;
+        x = clamp(cx + Math.cos(a) * d, 40, WORLD - 40); y = clamp(cy + Math.sin(a) * d, 40, WORLD - 40);
+      } while (bldHit(x, y, INF.r + 6) && ++tries < 15);
+      const m = {
+        id: nextId++, kind: 'inf', team: sq.team, squad: sq, role: i === 0 ? 'at' : 'rifle',
+        x, y, vx: 0, vy: 0, a: rand(0, TAU), r: INF.r, hp: INF.hp, dead: false,
+        cd: rand(0, 1.5), atCd: rand(0, 3), thinkT: rand(0, 0.3), tgt: null, atTgt: null, threat: null,
+        fx: rand(-80, 80), fy: rand(-80, 80),
+      };
+      sq.members.push(m); infantry.push(m);
+    }
+    sq.obj = -1; sq.objT = 0; sq.respawnAt = 0; sq.ox = 0; sq.oy = 0;
+  }
+  function resetInfantry() {
+    infantry.length = 0; squads.length = 0;
+    for (const team of ['de', 'su']) for (let k = 0; k < INF.squads; k++) {
+      const sq = { team, members: [] };
+      squads.push(sq); spawnSquad(sq);
+    }
+  }
+  function killSoldier(m, src) {
+    if (m.dead) return;
+    m.dead = true; m.hp = 0;
+    ev({ e: 'id', x: r1(m.x), y: r1(m.y), a: r2(m.a), t: TEAM_IDS.indexOf(m.team) });
+    if (src && src.kind === 'tank' && src.team !== m.team) src.award('Infantry Killed', SCORE.infantry);
+  }
+  function hurtSoldier(m, dmg, src) {
+    if (m.dead || phase !== 'play') return;
+    m.hp -= dmg;
+    if (m.hp <= 0) killSoldier(m, src);
+  }
+  // where a squad goes: somewhere its side has business, spread across points, nearer is better
+  function squadObjective(sq, lx, ly) {
+    let best = -1, bs = -Infinity;
+    for (const p of wantedPoints(sq.team)) {
+      const others = squads.filter(o => o !== sq && o.team === sq.team && o.obj === p.i).length;
+      const sc = -Math.hypot(p.x - lx, p.y - ly) / 1400 + rand(0, 1) - others * 0.6 + (p.owner === sq.team ? 0.4 : 1);
+      if (sc > bs) { bs = sc; best = p.i; }
+    }
+    if (best < 0) {   // nothing to fight for: hold the nearest point we own
+      let bd = Infinity;
+      for (const p of points) if (p.owner === sq.team) { const d = Math.hypot(p.x - lx, p.y - ly); if (d < bd) { bd = d; best = p.i; } }
+    }
+    return best;
+  }
+  function fireAT(m, t) {
+    const d = Math.hypot(t.x - m.x, t.y - m.y), tt = d / INF.atSpd;
+    const a = Math.atan2(t.y + t.vy * tt - m.y, t.x + t.vx * tt - m.x) + rand(-0.05, 0.05);
+    const x = m.x + Math.cos(a) * 10, y = m.y + Math.sin(a) * 10;
+    bullets.push({
+      id: nextId++, x, y, a, vx: Math.cos(a) * INF.atSpd, vy: Math.sin(a) * INF.atSpd,
+      r: 5, dmg: INF.atDmg, hp: 40, team: m.team, owner: m, life: (INF.atRange + 80) / INF.atSpd, kind: 'rocket',
+      front: 0.85, splash: 22, accel: 0, maxSpd: 0, hits: [],
+    });
+    ev({ e: 'f', id: m.id, g: 0, x: r1(x), y: r1(y), a: r3(a), k: KINDS.indexOf('rocket'), b: 0, r: 8 });
+  }
+  function fireRifle(m, e) {
+    const d = Math.hypot(e.x - m.x, e.y - m.y);
+    const moving = Math.hypot(e.vx, e.vy) > 5 ? 0.75 : 1;
+    const hit = Math.random() < clamp(0.5 - d / 1500, 0.12, 0.45) * moving;
+    const mx = hit ? e.x : e.x + rand(-28, 28), my = hit ? e.y : e.y + rand(-28, 28);
+    ev({ e: 'rf', x: r1(m.x), y: r1(m.y), x2: r1(mx), y2: r1(my) });
+    if (hit) hurtSoldier(e, INF.rifleDmg, m);
+  }
+  function updateInfantry(dt) {
+    const play = phase === 'play';
+    const wanted = { de: new Set(wantedPoints('de').map(p => p.i)), su: new Set(wantedPoints('su').map(p => p.i)) };
+    for (const sq of squads) {
+      const alive = sq.members.filter(m => !m.dead);
+      if (!alive.length) {
+        if (!sq.respawnAt) sq.respawnAt = time + INF.respawn;
+        else if (time >= sq.respawnAt && play) spawnSquad(sq);
+        continue;
+      }
+      sq.objT -= dt;
+      if (sq.obj < 0 || sq.objT <= 0 || (!wanted[sq.team].has(sq.obj) && points[sq.obj].owner !== sq.team)) {
+        sq.obj = squadObjective(sq, alive[0].x, alive[0].y);
+        sq.objT = rand(25, 40);
+        const a = rand(0, TAU), rr = Math.sqrt(Math.random()) * CAP_R * 0.45;
+        sq.ox = Math.cos(a) * rr; sq.oy = Math.sin(a) * rr;
+      }
+    }
+    for (const m of infantry) {
+      if (m.dead) continue;
+      // look around a few times a second
+      m.thinkT -= dt;
+      if (m.thinkT <= 0) {
+        m.thinkT = rand(0.25, 0.4);
+        m.tgt = null; m.atTgt = null; m.threat = null;
+        let bd = INF.rifleRange;
+        for (const e of infantry) {
+          if (e.dead || e.team === m.team) continue;
+          const d = Math.hypot(e.x - m.x, e.y - m.y);
+          if (d < bd && !bldLine(m.x, m.y, e.x, e.y)) { bd = d; m.tgt = e; }
+        }
+        let td = Infinity, tn = null;
+        for (const t of tanks) {
+          if (!t.alive || t.team === m.team) continue;
+          const d = Math.hypot(t.x - m.x, t.y - m.y);
+          if (d < td) { td = d; tn = t; }
+        }
+        if (tn && m.role === 'at' && td < INF.atSeek && m.atCd <= 4) m.atTgt = tn;      // go hunting with a round (nearly) ready
+        else if (tn && td < INF.fearR + tn.r) m.threat = tn;                              // everyone else gets out of the way
+      }
+      // where to walk
+      const sq = m.squad, p = points[sq.obj];
+      let gx = m.x, gy = m.y, spd = INF.speed;
+      if (!play) { /* hold still between battles */ }
+      else if (m.threat && m.threat.alive) {
+        const a = Math.atan2(m.y - m.threat.y, m.x - m.threat.x) + (m.fx > 0 ? 0.6 : -0.6);
+        gx = m.x + Math.cos(a) * 100; gy = m.y + Math.sin(a) * 100; spd *= 1.3;
+      } else if (m.atTgt && m.atTgt.alive) {
+        if (Math.hypot(m.atTgt.x - m.x, m.atTgt.y - m.y) > INF.atRange * 0.8) { gx = m.atTgt.x; gy = m.atTgt.y; spd *= 1.15; }
+      } else if (m.tgt && !m.tgt.dead) {
+        // hold position and shoot
+      } else if (p) { gx = p.x + sq.ox + m.fx; gy = p.y + sq.oy + m.fy; }
+      const dx = gx - m.x, dy = gy - m.y, d = Math.hypot(dx, dy);
+      if (d > 12) {
+        let a = Math.atan2(dy, dx);
+        for (const off of [0, 0.6, -0.6, 1.2, -1.2, 1.8, -1.8, 2.6, -2.6]) {        // feel round houses
+          if (!bldHit(m.x + Math.cos(a + off) * 18, m.y + Math.sin(a + off) * 18, m.r)) { a += off; break; }
+        }
+        const v = Math.min(spd, d / dt);
+        m.vx = Math.cos(a) * v; m.vy = Math.sin(a) * v;
+        m.a = turnToward(m.a, a, 8 * dt);
+      } else { m.vx = m.vy = 0; }
+      m.x = clamp(m.x + m.vx * dt, 20, WORLD - 20); m.y = clamp(m.y + m.vy * dt, 20, WORLD - 20);
+      bldCollide(m, m.r);
+      if (!play) continue;
+      // shoot
+      m.cd -= dt; m.atCd -= dt;
+      const at = m.atTgt && m.atTgt.alive ? m.atTgt : null;
+      const atD = at ? Math.hypot(at.x - m.x, at.y - m.y) : Infinity;
+      if (at && atD <= INF.atRange + at.r) {
+        m.a = Math.atan2(at.y - m.y, at.x - m.x);
+        if (m.atCd <= 0 && !bldLine(m.x, m.y, at.x, at.y)) { fireAT(m, at); m.atCd = INF.atCd; }
+      } else if (m.tgt && !m.tgt.dead) {
+        m.a = Math.atan2(m.tgt.y - m.y, m.tgt.x - m.x);
+        if (m.cd <= 0) { fireRifle(m, m.tgt); m.cd = rand(INF.rifleCd[0], INF.rifleCd[1]); }
+      }
+    }
+    // tanks run soldiers over (enemies) or shove them aside (friends)
+    for (const t of tanks) {
+      if (!t.alive) continue;
+      const fast = Math.hypot(t.vx, t.vy) > 30;
+      for (const m of infantry) {
+        if (m.dead) continue;
+        const dx = m.x - t.x, dy = m.y - t.y, rr = t.r + m.r;
+        if (dx * dx + dy * dy >= rr * rr) continue;
+        if (m.team !== t.team && fast && phase === 'play') { killSoldier(m, t); continue; }
+        const dd = Math.hypot(dx, dy) || 1;
+        m.x = t.x + dx / dd * rr; m.y = t.y + dy / dd * rr;
+      }
+    }
   }
 
   // =====================================================================
@@ -1160,7 +1371,10 @@ function createGame(opts = {}) {
     for (const e of client.pending) E.push(e);
     client.pending.length = 0;
 
-    const snap = { t: 's', tm: r3(time), T, B, O, E };
+    // infantry near the camera: [id, team, x, y, facing, anti-tank?, moving?]
+    const I = [];
+    for (const m of infantry) if (!m.dead && near(m.x, m.y)) I.push([m.id, TEAM_IDS.indexOf(m.team), r1(m.x), r1(m.y), r2(m.a), m.role === 'at' ? 1 : 0, m.vx || m.vy ? 1 : 0]);
+    const snap = { t: 's', tm: r3(time), T, B, O, E, I };
     // conquest state is tiny, so it goes out every snapshot
     snap.cp = points.map(p => [r2(p.prog), p.owner === 'de' ? 1 : p.owner === 'su' ? 2 : 0, p.contested ? 1 : 0, p.active ? 1 : 0, p.nd, p.ns, p.canAtt ? 1 : 0, p.canDef ? 1 : 0]);
     snap.ln = LINES.map(L => (lineDead[L] ? 1 : 0));
@@ -1186,6 +1400,7 @@ function createGame(opts = {}) {
 
   // ---------- init ----------
   for (const type in OB_CAP) for (let i = 0; i < OB_CAP[type]; i++) spawnObstacle(type);
+  resetInfantry();
   balanceBots();
 
   return {

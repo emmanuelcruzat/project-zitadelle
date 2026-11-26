@@ -375,6 +375,11 @@ const Sound = (() => {
       for (const f of [1240, 2870, 4410]) osc(o, 'sine', f, f * 0.97, 0.4, 0.18, 0.001, 0.45);
       osc(o, 'triangle', 3300, 900, 0.5, 0.12, 0.01, 0.5, 0.02);
     },
+    rifle(o) {                                                                 // a single rifle crack and its echo
+      nz(o, 'highpass', 3200, 3200, 0, 0.6, 0.001, 0.025);
+      nz(o, 'bandpass', 1900, 800, 0.05, 0.55, 0.001, 0.06, true);
+      nz(o, 'lowpass', 700, 400, 0.4, 0.14, 0.02, 0.45, false, 0.03);
+    },
     reload(o) {                                                                // breech block closing
       nz(o, 'highpass', 2600, 2600, 0, 0.5, 0.001, 0.025);
       osc(o, 'sine', 720, 640, 0.05, 0.35, 0.001, 0.08);
@@ -382,7 +387,7 @@ const Sound = (() => {
       osc(o, 'sine', 300, 180, 0.08, 0.7, 0.002, 0.12, 0.11);
     },
   };
-  const COST = { cannon: 2, boom: 4, rocket: 1.5, mg: 0.6, hit: 0.6, clank: 0.6, reload: 0.5 };
+  const COST = { rifle: 0.4, cannon: 2, boom: 4, rocket: 1.5, mg: 0.6, hit: 0.6, clank: 0.6, reload: 0.5 };
 
   // vol: loudness at the source; dn: 0 (on top of you) .. 1 (edge of hearing)
   api.play = (kind, vol = 1, dn = 0, S = 1, own = false, x1) => {
@@ -425,7 +430,7 @@ const Sound = (() => {
   };
   return api;
 })();
-const HEAR = { cannon: 3800, boom: 3800, rocket: 3000, mg: 2000, hit: 1500, clank: 1500, reload: 400 };
+const HEAR = { rifle: 1700, cannon: 3800, boom: 3800, rocket: 3000, mg: 2000, hit: 1500, clank: 1500, reload: 400 };
 function soundAt(kind, x, y, vol = 1, S = 1, own = false, x1) {
   // small guns don't carry as far as big ones
   const reach = (HEAR[kind] || 1600) * (kind === 'cannon' ? clamp(S, 0.5, 1.4) : 1);
@@ -482,7 +487,8 @@ function onMessage(m) {
   }
   if (m.t === 'pong') { ping = performance.now() - m.c; return; }
   if (m.t !== 's') return;
-  const s = { tm: m.tm, T: new Map(), B: new Map(), O: new Map() };
+  const s = { tm: m.tm, T: new Map(), B: new Map(), O: new Map(), I: new Map() };
+  for (const a of m.I || []) s.I.set(a[0], { id: a[0], team: TEAM_IDS[a[1]], x: a[2], y: a[3], a: a[4], at: a[5], mv: a[6] });
   for (const a of m.T) s.T.set(a[0], { id: a[0], team: TEAM_IDS[a[1]], cls: clsByIdx(a[2]), x: a[3], y: a[4], hullA: a[5], turA: a[6], r: a[7], hp: a[8], inv: a[9], name: a[10], mgRel: Array.isArray(a[11]) ? a[11] : undefined, rank: a[12] | 0 });
   for (const a of m.B) s.B.set(a[0], { id: a[0], x: a[1], y: a[2], r: a[3], team: TEAM_IDS[a[4]], kind: KINDS[a[5]], a: a[6] });
   for (const a of m.O) s.O.set(a[0], { id: a[0], type: OB_TYPES[a[1]], x: a[2], y: a[3], a: a[4], hp: a[5], gunA: a[6], grow: a[7], r: OB[OB_TYPES[a[1]]].r });
@@ -518,7 +524,7 @@ setInterval(() => send({ t: 'ping', c: performance.now() }), 2000);
 // Client-side view state
 // =====================================================================
 let now = 0;                 // local seconds (drives particles/animation)
-let vTanks = [], vBullets = [], vObs = [];
+let vTanks = [], vBullets = [], vObs = [], vInf = [];
 const tstate = new Map();    // per-tank local animation state
 const ostate = new Map();    // per-obstacle hit flash
 const particles = [], texts = [], wrecks = [], feed = [];
@@ -795,12 +801,13 @@ function lerpEnt(a, b, f, angles) {
   return o;
 }
 function interpolate() {
-  if (!snaps.length || offset === null) { vTanks = []; vBullets = []; vObs = []; return; }
+  if (!snaps.length || offset === null) { vTanks = []; vBullets = []; vObs = []; vInf = []; return; }
   renderT = now + offset - INTERP_DELAY;
   while (snaps.length > 2 && snaps[1].tm <= renderT) snaps.shift();
   const s0 = snaps[0], s1 = snaps[1] || s0;
   const f = s1.tm > s0.tm ? clamp((renderT - s0.tm) / (s1.tm - s0.tm), 0, 1) : 1;
-  vTanks = []; vBullets = []; vObs = [];
+  vTanks = []; vBullets = []; vObs = []; vInf = [];
+  for (const [id, b] of s1.I) { const a = s0.I.get(id); vInf.push(a ? lerpEnt(a, b, f, ['a']) : b); }
   for (const [id, b] of s1.T) { const a = s0.T.get(id); vTanks.push(a ? lerpEnt(a, b, f, ['hullA', 'turA']) : b); }
   for (const [id, b] of s1.B) { const a = s0.B.get(id); vBullets.push(a ? lerpEnt(a, b, f, []) : b); }
   for (const [id, b] of s1.O) { const a = s0.O.get(id); vObs.push(a ? lerpEnt(a, b, f, ['a', 'gunA']) : b); }
@@ -964,6 +971,16 @@ function handleEvent(e) {
     case 't': texts.push({ x: e.x, y: e.y, text: e.text, color: e.c, size: e.s, t: now }); break;
     case 'm': bigMessage(e.text, e.d); break;
     case 'aw': addAward(e.l, e.n); break;
+    case 'rf':   // rifle shot: a faint tracer and a crack
+      tracers.push({ x: e.x, y: e.y, x2: e.x2, y2: e.y2, t: now });
+      if (tracers.length > 60) tracers.shift();
+      soundAt('rifle', e.x, e.y, 0.35);
+      break;
+    case 'id':   // a soldier falls
+      fallen.push({ x: e.x, y: e.y, a: e.a, team: TEAM_IDS[e.t], t: now });
+      if (fallen.length > 80) fallen.shift();
+      addP(e.x, e.y, rand(-10, 10), rand(-10, 10), 0.6, 8, 'rgba(160,150,120,0.6)', 'smoke');
+      break;
     case 'mk': addSpot(e); break;
     case 'intro': battleIntro(e.t); break;
     case 'sh': cam.shake = Math.min(14, cam.shake + e.a); break;
@@ -1613,6 +1630,56 @@ function drawObstacle(o) {
   if (o.hp < 0.999) hpBar(o.x, o.y + o.r * s + 10, o.r * 1.6, o.hp, '#86c25a');
 }
 
+// ---- infantry (prototype) ----
+const INF_COL = {
+  de: { body: '#5d6457', helmet: '#474d44', dark: '#2f332d' },   // field grey
+  su: { body: '#6e6c48', helmet: '#56603f', dark: '#3a3a26' },   // khaki
+};
+const FALLEN_LEN = 14;
+let tracers = [], fallen = [];
+function drawSoldier(m, down) {
+  const C = INF_COL[m.team] || INF_COL.de, c = ctx;
+  c.save(); c.translate(m.x, m.y); c.rotate(m.a);
+  if (down) {                      // lying where they fell, fading out
+    c.fillStyle = C.dark;
+    c.beginPath(); c.ellipse(-2, 0, 7, 3.2, 0, 0, TAU); c.fill();
+    c.fillStyle = C.helmet; c.beginPath(); c.arc(5.5, 0, 2.6, 0, TAU); c.fill();
+    c.restore(); return;
+  }
+  // shadow, marching step, shoulders, weapon, helmet
+  c.fillStyle = 'rgba(0,0,0,0.22)'; c.beginPath(); c.ellipse(1, 1.5, 6, 4.5, 0, 0, TAU); c.fill();
+  const step = m.mv ? Math.sin(now * 11 + m.id) * 2.2 : 0;
+  c.fillStyle = C.dark;
+  c.beginPath(); c.ellipse(step, -2.2, 2.2, 1.4, 0, 0, TAU); c.ellipse(-step, 2.2, 2.2, 1.4, 0, 0, TAU); c.fill();
+  c.fillStyle = C.body; c.strokeStyle = C.dark; c.lineWidth = 0.8;
+  c.beginPath(); c.ellipse(0, 0, 3, 5.2, 0, 0, TAU); c.fill(); c.stroke();
+  if (m.at) {                      // anti-tank weapon carried over the shoulder
+    c.fillStyle = '#4a4a38'; c.fillRect(-6, 2.2, 15, 2.6);
+    c.fillStyle = '#6b5a3a'; c.beginPath(); c.arc(9.5, 3.5, 2.4, 0, TAU); c.fill();
+  } else {                         // rifle held forward
+    c.strokeStyle = '#3b3226'; c.lineWidth = 1.3; c.beginPath(); c.moveTo(1, 1.8); c.lineTo(10, 1.4); c.stroke();
+  }
+  c.fillStyle = C.helmet; c.strokeStyle = C.dark; c.lineWidth = 0.8;
+  c.beginPath(); c.arc(0.5, 0, 3.2, 0, TAU); c.fill(); c.stroke();
+  c.restore();
+}
+function drawInfantry() {
+  fallen = fallen.filter(f => now - f.t < FALLEN_LEN);
+  for (const f of fallen) {
+    if (!inView(f.x, f.y, 20)) continue;
+    ctx.globalAlpha = clamp((FALLEN_LEN - (now - f.t)) / 3, 0, 0.85);
+    drawSoldier(f, true);
+  }
+  ctx.globalAlpha = 1;
+  for (const m of vInf) if (inView(m.x, m.y, 20)) drawSoldier(m, false);
+  // rifle tracers: a quick, faint streak
+  tracers = tracers.filter(t => now - t.t < 0.12);
+  ctx.lineWidth = 1.2;
+  for (const t of tracers) {
+    ctx.strokeStyle = `rgba(255,236,170,${0.7 * (1 - (now - t.t) / 0.12)})`;
+    ctx.beginPath(); ctx.moveTo(t.x, t.y); ctx.lineTo(t.x2, t.y2); ctx.stroke();
+  }
+}
 function drawBullet(b) {
   const T = TEAMS[b.team] || TEAMS.x;
   if (b.kind === 'rocket') {
@@ -1819,6 +1886,7 @@ function renderWorld() {
   drawBuildings();
   drawParticles('bottom');
   for (const o of vObs) if (inView(o.x, o.y, o.r * 1.5)) drawObstacle(o);
+  drawInfantry();
   for (const b of vBullets) if (inView(b.x, b.y, 30)) drawBullet(b);
   for (const t of vTanks) if (inView(t.x, t.y, t.r * 4)) drawTankWorld(t);
   drawBushes();
@@ -2215,6 +2283,8 @@ function drawMinimap() {
     hudText(p.id, x + p.x * k, y + p.y * k + 0.5, 10, '#fff', 'center', 600);
   });
   if (you) {
+    ctx.fillStyle = TEAMS[you.team].mini;
+    for (const m of vInf) if (m.team === you.team) ctx.fillRect(x + m.x * k - 1, y + m.y * k - 1, 2, 2);
     for (const t of vTanks) {
       if (t.id === you.id || t.team !== you.team) continue;
       ctx.fillStyle = TEAMS[t.team].mini;
