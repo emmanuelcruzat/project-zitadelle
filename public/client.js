@@ -5,7 +5,7 @@ const {
   TAU, rand, pick, clamp, lerp, angDiff, lerpAngle,
   WORLD, CENTER, REARS, BUILDINGS, HAMLETS, O_IDX, LINES, CATS, RESERVES,
   CLASSES, CLASS_IDS, START_CLASS, OB, OB_TYPES, TEAM_IDS, KINDS, VIEW_W,
-  CAP_POINTS, CAP_R, ATTACKER, DEFENDER,
+  CAP_POINTS, CAP_R, ATTACKER, DEFENDER, RANKS, RANK_SCORE,
 } = Z;
 
 const INTERP_DELAY = 0.1;   // seconds behind the newest snapshot we render
@@ -117,8 +117,9 @@ addEventListener('resize', resize);
 const keys = new Set();
 const mouse = { x: innerWidth / 2, y: innerHeight / 2, down: false };
 let autofire = false;
-let state = 'menu'; // menu | play | dead
+let state = 'menu'; // menu | play | dead (on the battle map choosing where to deploy: knocked out, or just joined)
 let devMode = false;
+let rosterMismatch = false;   // server and page disagree on the vehicle list (see the welcome message)
 // Zoom: the scroll wheel zooms in (never out past the normal view). Shift toggles the gunner's sight: a
 // magnified view centred on where you were aiming, which pans when the cursor is pushed to the edge.
 const view2 = { zoom: 1, sight: false, sightZoom: 2.5, offX: 0, offY: 0 };
@@ -140,7 +141,7 @@ function setSight(on) {
 }
 
 addEventListener('keydown', e => {
-  if (state !== 'play' || e.target.tagName === 'INPUT') return;
+  if (state !== 'play' || showBoard || e.target.tagName === 'INPUT') return;
   const k = e.key.toLowerCase();
   keys.add(k);
   if (k === 'f' && !e.repeat) { autofire = !autofire; bigMessage(autofire ? 'Autofire ON' : 'Autofire OFF', 1.2); }
@@ -153,6 +154,7 @@ addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
 addEventListener('blur', () => { keys.clear(); mouse.down = mouse.rdown = false; });
 canvas.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
 canvas.addEventListener('mousedown', e => {
+  if (showBoard) return;
   if (e.button === 0) mouse.down = true;
   if (e.button === 2) {
     mouse.rdown = true;
@@ -164,7 +166,7 @@ addEventListener('mouseup', e => { if (e.button === 0) mouse.down = false; if (e
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 canvas.addEventListener('wheel', e => {
   e.preventDefault();
-  if (state !== 'play') return;
+  if (state !== 'play' || showBoard) return;
   const f = Math.pow(1.15, -Math.sign(e.deltaY));
   if (view2.sight) view2.sightZoom = clamp(view2.sightZoom * f, SIGHT_MIN, SIGHT_MAX);
   else view2.zoom = clamp(view2.zoom * f, 1, ZOOM_MAX);
@@ -255,12 +257,43 @@ const Sound = (() => {
   // ---- sound recipes ----
   const R = {
     // tank guns; S scales weight with calibre
-    cannon(o, S, own) {
-      nz(o, 'highpass', 2400, 2400, 0, 0.9, 0.001, 0.05);                       // supersonic crack
-      nz(o, 'lowpass', 6000, 130 / S, 0.45 * S, 1.5, 0.002, 0.85 * S, true);    // muzzle blast
-      osc(o, 'sine', 125 / S, 28, 0.4 * S, 2.1, 0.003, 0.75 * S);              // concussion
-      osc(o, 'triangle', 70 / S, 30, 0.5, 0.9, 0.004, 0.6 * S);
-      nz(o, 'lowpass', 320, 180, 2, 0.65, 0.08, 2.6 * S, false, 0.04);        // rolling thunder
+    // Each calibre band has its own voice, from bright and short to dark and long:
+    //   20mm autocannon: dry "pak"         37-50mm: thin, ringing bang       75-100mm: full boom, deeper with calibre
+    //   122-152mm: dark, chest-thumping WHUMP with a long echo; little crack (howitzers are slow)
+    // x = { mm: calibre, v: muzzle velocity }; long high-velocity guns (v >= 1.45) add a whip-crack double report.
+    cannon(o, S, own, x = {}) {
+      const mm = x.mm || 75 * Math.pow(S, 1 / 0.55), vel = x.v || 1.2, hv = vel >= 1.45;
+      if (mm <= 25) {
+        nz(o, 'highpass', 3000, 3000, 0, 0.7, 0.001, 0.02);
+        nz(o, 'bandpass', 2400, 1000, 0.04, 1.1, 0.001, 0.05, true);
+        osc(o, 'sine', 320, 140, 0.04, 0.6, 0.001, 0.05);
+        nz(o, 'lowpass', 1200, 600, 0.1, 0.18, 0.01, 0.18, false, 0.02);
+      } else if (mm <= 50) {
+        nz(o, 'highpass', 2600, 2600, 0, 1.0, 0.001, 0.03);                      // crack
+        nz(o, 'bandpass', 1800, 1100, 0.1, 1.0, 0.001, 0.12, true);               // bark
+        osc(o, 'triangle', 620, 560, 0.3, 0.25, 0.001, 0.25);                    // metallic ring
+        osc(o, 'sine', 210, 90, 0.15, 0.9, 0.002, 0.18);                         // small thump
+        nz(o, 'lowpass', 2500, 300, 0.3, 0.9, 0.002, 0.35, true);                 // blast
+        nz(o, 'lowpass', 400, 250, 0.8, 0.35, 0.03, 0.9, false, 0.03);           // short tail
+      } else if (mm < 110) {
+        const w = clamp((mm - 75) / 35, 0, 1);                                  // 75mm → 0, 100mm+ → ~1
+        nz(o, 'highpass', 2400, 2400, 0, 0.8 * (hv ? 1.5 : 1), 0.001, 0.04);   // crack
+        if (hv) nz(o, 'highpass', 3600, 3600, 0, 0.75, 0.001, 0.02, false, 0.014); // whip: second report
+        nz(o, 'lowpass', 6000 - 2500 * w, 140 - 60 * w, 0.45, 1.5, 0.002, 0.8 + 0.4 * w, true); // muzzle blast
+        osc(o, 'sine', 140 - 40 * w, 28, 0.4, 2.1, 0.003, 0.7 + 0.4 * w);       // concussion
+        osc(o, 'triangle', 70, 30, 0.5, 0.9, 0.004, 0.6 + 0.3 * w);
+        nz(o, 'lowpass', 320, 180, 2, 0.65, 0.08, 2.4 + 1.2 * w, false, 0.04);  // rolling thunder
+      } else {
+        nz(o, 'highpass', 2200, 2200, 0, hv ? 1.0 : 0.35, 0.001, 0.03);          // (the long 128mm still cracks)
+        if (hv) nz(o, 'highpass', 3600, 3600, 0, 0.7, 0.001, 0.02, false, 0.014);
+        nz(o, 'lowpass', 1400, 45, 1.0, 2.0, 0.003, 1.4, true);                  // dark muzzle blast
+        osc(o, 'sine', 70, 18, 0.9, 2.6, 0.004, 1.4);                            // chest punch
+        osc(o, 'sine', 42, 16, 1.2, 1.8, 0.008, 1.8);                            // sub-bass push
+        nz(o, 'lowpass', 180, 180, 0, 1.0, 0.01, 0.5);                           // pressure wave
+        nz(o, 'lowpass', 260, 120, 3, 0.9, 0.06, 4.5, false, 0.05);             // long rumble
+        nz(o, 'lowpass', 300, 140, 1.5, 0.6, 0.05, 2.2, false, 0.35);           // echo off the steppe
+        nz(o, 'lowpass', 260, 120, 1.5, 0.35, 0.05, 2.0, false, 0.8);           // and again, further off
+      }
       if (own) {
         // breech slamming back, spent case clattering on the turret floor
         osc(o, 'sine', 410, 380, 0.2, 0.22, 0.001, 0.22, 0.11);
@@ -280,12 +313,28 @@ const Sound = (() => {
       nz(o, 'bandpass', 350, 2600, 0.9, 0.55, 0.06, 1.1);                      // shriek
       nz(o, 'lowpass', 900, 180, 1.1, 0.8, 0.02, 1.4, true);                    // roar
     },
+    // Explosion, built the way a real one sounds: a near-instant shock crack, a saturated blast that darkens
+    // as it expands, a ground thump you feel more than hear, fragments and dirt pattering down at random,
+    // then a long rumble and a late echo off the steppe. Every layer is randomised a little so no two
+    // explosions sound alike. S = size (0.7 small HE shell .. 1.8 ammo dump / depot).
     boom(o, S) {
-      nz(o, 'highpass', 1800, 1800, 0, 0.6, 0.001, 0.07);
-      nz(o, 'lowpass', 4000, 45, 1.2 * S, 1.8, 0.003, 1.6 * S, true);
-      osc(o, 'sine', 80, 20, 0.9 * S, 2.4, 0.004, 1.3 * S);
-      nz(o, 'lowpass', 240, 160, 2, 0.8, 0.12, 3.2 * S, false, 0.05);
-      nz(o, 'bandpass', 2200, 900, 0.8, 0.25, 0.05, 0.8 * S, false, 0.1);       // falling debris
+      const j = (a = 0.15) => 1 + (Math.random() * 2 - 1) * a;       // jitter
+      const L = Math.min(1.6, S);                                     // length scale
+      nz(o, 'lowpass', 14000, 14000, 0, 1.7, 0.0005, 0.018 * j(), true);              // shock front: a hard crack
+      nz(o, 'highpass', 2200 * j(), 2200, 0, 0.7, 0.001, 0.05 * L);                   // its bright edge
+      nz(o, 'lowpass', 3800 * j(), 85 / L, 0.28 * L * j(), 2.0, 0.002, 0.55 * L * j(), true); // blast, darkening as it spreads
+      nz(o, 'bandpass', 190 * j(), 85, 0.35, 1.3, 0.003, 0.45 * L, true);            // the air "whump"
+      osc(o, 'sine', 62 * j(0.2), 21, 0.5 * L, 2.7, 0.002, 0.9 * L * j());            // chest punch
+      osc(o, 'sine', 38 * j(0.2), 14, 0.9 * L, 1.7, 0.006, 1.5 * L * j(), 0.02);     // ground heave
+      // fragments, dirt and stones landing: short random ticks thinning out over ~1 s
+      const n = Math.round(9 + 7 * L);
+      for (let k = 0; k < n; k++) {
+        const at = 0.04 + Math.pow(Math.random(), 1.6) * (0.9 * L), f = 1200 + Math.random() * 3200;
+        nz(o, 'bandpass', f, f * 0.8, 0.03, 0.22 * (1 - at / (1.2 * L)) * j(0.4), 0.001, 0.015 + Math.random() * 0.03, false, at);
+      }
+      nz(o, 'bandpass', 2400 * j(), 1100, 1.2, 0.12, 0.25, 1.3 * L, false, 0.25);     // fine dust and grit settling
+      nz(o, 'lowpass', 220 * j(), 70, 3, 1.0, 0.05, 3.4 * L * j(), false, 0.05);     // rolling rumble
+      nz(o, 'lowpass', 320, 120, 1.5, 0.45, 0.06, 2.2 * L, false, 0.45 + Math.random() * 0.35); // echo off the steppe
     },
     hit(o) {                                                                   // penetration: crunch of steel
       nz(o, 'bandpass', 1900, 450, 0.15, 1.0, 0.001, 0.18, true);
@@ -303,16 +352,16 @@ const Sound = (() => {
       osc(o, 'sine', 300, 180, 0.08, 0.7, 0.002, 0.12, 0.11);
     },
   };
-  const COST = { cannon: 2, boom: 2, rocket: 1.5, mg: 0.6, hit: 0.6, clank: 0.6, reload: 0.5 };
+  const COST = { cannon: 2, boom: 4, rocket: 1.5, mg: 0.6, hit: 0.6, clank: 0.6, reload: 0.5 };
 
   // vol: loudness at the source; dn: 0 (on top of you) .. 1 (edge of hearing)
-  api.play = (kind, vol = 1, dn = 0, S = 1, own = false) => {
+  api.play = (kind, vol = 1, dn = 0, S = 1, own = false, x1) => {
     if (!ac || api.muted || dn >= 1 || budget > 14) return;
     const v = vol * Math.pow(1 - dn, 1.5);
     if (v < 0.015) return;
     budget += COST[kind] || 1;
     const o = voice(v, dn, dn * 0.6);           // sound travels: far shots arrive late
-    R[kind](o, S, own);
+    R[kind](o, S, own, x1);
   };
   api.tone = (freqs, dur = 0.12, vol = 0.12) => {
     if (!ac || api.muted) return;
@@ -347,9 +396,11 @@ const Sound = (() => {
   return api;
 })();
 const HEAR = { cannon: 3800, boom: 3800, rocket: 3000, mg: 2000, hit: 1500, clank: 1500, reload: 400 };
-function soundAt(kind, x, y, vol = 1, S = 1, own = false) {
-  const dn = own ? 0 : Math.hypot(x - cam.x, y - cam.y) / (HEAR[kind] || 1600);
-  Sound.play(kind, vol, dn, S, own);
+function soundAt(kind, x, y, vol = 1, S = 1, own = false, x1) {
+  // small guns don't carry as far as big ones
+  const reach = (HEAR[kind] || 1600) * (kind === 'cannon' ? clamp(S, 0.5, 1.4) : 1);
+  const dn = own ? 0 : Math.hypot(x - cam.x, y - cam.y) / reach;
+  Sound.play(kind, vol, dn, S, own, x1);
 }
 
 // =====================================================================
@@ -388,7 +439,17 @@ function connect() {
 }
 
 function onMessage(m) {
-  if (m.t === 'welcome') { devMode = !!m.dev; return; }
+  if (m.t === 'welcome') {
+    devMode = !!m.dev;
+    // vehicles are sent by index: if the server is running an older vehicle list than this page,
+    // every tank would be drawn as the wrong model. Refuse to play until they match.
+    if (m.roster && m.roster !== CLASS_IDS.join(',')) {
+      rosterMismatch = true;
+      setStatus('The server is running an older version of the game — restart the server, then reload this page.');
+      if (state !== 'menu') backToMenu();
+    }
+    return;
+  }
   if (m.t === 'pong') { ping = performance.now() - m.c; return; }
   if (m.t !== 's') return;
   const s = { tm: m.tm, T: new Map(), B: new Map(), O: new Map() };
@@ -407,9 +468,10 @@ function onMessage(m) {
   you = m.you || null;
   // the server has the final say on which side we are on (it refuses switches mid-battle)
   if (you && you.team && you.team !== playerTeam && state !== 'menu') {
-    playerTeam = you.team; ui.spSig = '';
-    if (state === 'dead') buildPicker(ui.deathPicker, playerTeam);
+    playerTeam = you.team;
+    if (state === 'dead') onTeamChanged();
   }
+  if (m.lb) board = m.lb;
   sp = m.sp === undefined ? null : m.sp;
   if (m.cp) cps = m.cp;
   if (m.ln) lineDead = m.ln;
@@ -531,7 +593,9 @@ function handleEvent(e) {
           const sa = e.a + rand(-1.4, 1.4);
           addP(e.x, e.y, Math.cos(sa) * rand(40, 150), Math.sin(sa) * rand(40, 150), rand(0.6, 1.4), r * rand(0.3, 0.55), '#bdb7a6', 'smoke');
         }
-        soundAt('cannon', e.x, e.y, mine ? 1 : 0.9, [0.8, 1, 1.4][cal], mine);
+        // weight from the actual calibre when the server sends it, else the old light/medium/heavy class
+        const S = e.mm ? clamp(Math.pow(e.mm / 75, 0.55), 0.45, 1.75) : [0.8, 1, 1.4][cal];
+        soundAt('cannon', e.x, e.y, (mine ? 1 : 0.9) * clamp(0.3 + 0.65 * S, 0.6, 1.25), S, mine, { mm: e.mm, v: e.v });
         if (mine) cam.shake = Math.min(18, cam.shake + [4, 7, 11][cal]);
         else cam.shake = Math.min(18, cam.shake + [1.5, 3, 6][cal] * near * near);
       }
@@ -749,7 +813,7 @@ function drawGun(c, g, r, rec, T) {
   }
   c.restore();
 }
-function drawInsignia(c, team, s) {
+function drawFactionMark(c, team, s) {   // hull marking: Balkenkreuz or red star, centred on the origin
   if (team === 'de') {
     c.fillStyle = '#f2f2ea';
     c.beginPath(); c.rect(-s, -s * 0.32, s * 2, s * 0.64); c.rect(-s * 0.32, -s, s * 0.64, s * 2); c.fill();
@@ -829,9 +893,9 @@ function drawTankModel(c, cls, teamId, r, hullA, turA, recoil, phase, flash, mgR
     c.fillStyle = 'rgba(0,0,0,0.18)';
     c.beginPath(); c.arc(cls.caseX * r - cw * 0.22, -ch * 0.2, r * 0.13, 0, TAU); c.fill();
     const ix = cls.caseX * r - cw * 0.5 - L * 0.12;
-    if (ix > -L * 0.46) { c.save(); c.translate(ix, 0); drawInsignia(c, teamId, r * 0.16); c.restore(); }
+    if (ix > -L * 0.46) { c.save(); c.translate(ix, 0); drawFactionMark(c, teamId, r * 0.16); c.restore(); }
   } else if (teamId !== 'wreck') {
-    c.save(); c.translate(-L * 0.36, 0); drawInsignia(c, teamId, r * 0.15); c.restore();
+    c.save(); c.translate(-L * 0.36, 0); drawFactionMark(c, teamId, r * 0.15); c.restore();
   }
   c.restore();
 
@@ -1341,6 +1405,22 @@ function drawLabels(t) {
 }
 
 function updateCamera(dt) {
+  if (state === 'dead' && dmap.open) {
+    // whole battlefield; or swooping down onto the chosen point (centred in the space left of the
+    // vehicle panel on the right)
+    let tx = CENTER, ty = CENTER, ts = Math.min(W / WORLD, (H - 170) / WORLD) * 0.94;
+    ty -= 20 / ts;
+    if (dmap.sel != null) {
+      ts = Math.max(W, H * 16 / 9) / (VIEW_W * 1.1) * 0.8;
+      tx = dmap.selX + deployPanelW() / 2 / ts; ty = dmap.selY;
+    }
+    const k = 1 - Math.exp(-dt * 4);
+    cam.scale = Math.exp(Math.log(cam.scale) + (Math.log(ts) - Math.log(cam.scale)) * k);
+    cam.x += (tx - cam.x) * k; cam.y += (ty - cam.y) * k;
+    cam.shake = 0;
+    if (dmap.stage === 'zoom' && Math.abs(Math.log(cam.scale / ts)) < 0.12 && Math.hypot(tx - cam.x, ty - cam.y) * cam.scale < 40) showDeployPanel();
+    return;
+  }
   let tx = cam.x, ty = cam.y, fov = 1.1, rate = 1.5;
   const me = myTank();
   if (you) {
@@ -1402,7 +1482,17 @@ function render() {
   ctx.fillRect(0, 0, W, H);
   ctx.setTransform(DPR * sc, 0, 0, DPR * sc, DPR * (W / 2 - cam.x * sc + shx), DPR * (H / 2 - cam.y * sc + shy));
   view = { x0: cam.x - W / 2 / sc, x1: cam.x + W / 2 / sc, y0: cam.y - H / 2 / sc, y1: cam.y + H / 2 / sc };
-
+  // battle map: fully drawn when zoomed out, fading away as the camera swoops in on a point
+  const mapA = state === 'dead' && dmap.open ? clamp((0.5 - sc) / 0.2, 0, 1) : 0;
+  if (mapA < 1) renderWorld();
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  if (mapA > 0) drawDeployMap(mapA);
+  if (state === 'dead' && dmap.open && dmap.stage === 'pick') drawDeployButton();
+  if (view2.sight && state === 'play') drawSightOverlay();
+  drawHUD();
+  drawBoard();
+}
+function renderWorld() {
   drawGround();
   drawPoints();
   drawMarks();
@@ -1427,10 +1517,6 @@ function render() {
     ctx.fillStyle = tx.color; ctx.fillText(tx.text, tx.x, tx.y - age * 30);
   }
   ctx.globalAlpha = 1;
-
-  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  if (view2.sight && state === 'play') drawSightOverlay();
-  drawHUD();
 }
 
 // =====================================================================
@@ -1611,7 +1697,7 @@ function drawHUD() {
       cx, H * 0.36 + 94, 17, '#e8e0c0', 'center', 400);
   }
 
-  drawMinimap();
+  if (!(state === 'dead' && dmap.open)) drawMinimap();
   if (connected) hudText(`${Math.round(ping)} ms`, W - 14, H - Math.min(170, W * 0.22) - 32, 12, '#e8e0c0', 'right', 400);
 
   if (you && state === 'play') {
@@ -1661,20 +1747,25 @@ function drawHUD() {
     }
 
     const mx = mouse.x, my = mouse.y;
-    ctx.strokeStyle = view2.sight ? 'rgba(0,0,0,0)' : 'rgba(255,255,255,0.9)'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(mx, my, 10, 0, TAU);
-    ctx.moveTo(mx - 18, my); ctx.lineTo(mx - 6, my); ctx.moveTo(mx + 6, my); ctx.lineTo(mx + 18, my);
-    ctx.moveTo(mx, my - 18); ctx.lineTo(mx, my - 6); ctx.moveTo(mx, my + 6); ctx.lineTo(mx, my + 18);
-    ctx.stroke();
-    // ---- reload ring ----
+    // cursor: a small dot
+    if (!view2.sight) {
+      ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.beginPath(); ctx.arc(mx, my, 3.5, 0, TAU); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.95)'; ctx.beginPath(); ctx.arc(mx, my, 2.25, 0, TAU); ctx.fill();
+    }
+    // ---- reload bar, under the cursor ----
     if (cls.guns[0].kind !== 'mg') {
-      const rl = you.rl || 0;
-      ctx.lineWidth = 4;
-      ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-      ctx.beginPath(); ctx.arc(mx, my, 24, 0, TAU); ctx.stroke();
-      ctx.strokeStyle = rl > 0 ? '#e6a03c' : '#7fd46a';
-      ctx.beginPath(); ctx.arc(mx, my, 24, -Math.PI / 2, -Math.PI / 2 + TAU * (1 - rl)); ctx.stroke();
-      if (rl > 0) hudText('LOADING', mx, my + 38, 11, '#e6a03c', 'center', 400);
+      const rl = you.rl || 0, bw = 40, bh = 5, rx = mx - bw / 2, ry = my + 10, clip = cls.guns[0].clip;
+      ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(rx - 1, ry - 1, bw + 2, bh + 2);
+      if (clip && rl === 0) {
+        // magazine gun: one pip per round left
+        const am = you.am == null ? clip : you.am, pw = bw / clip;
+        ctx.fillStyle = '#7fd46a';
+        for (let k = 0; k < am; k++) ctx.fillRect(rx + k * pw, ry, Math.max(1, pw - 1), bh);
+      } else {
+        ctx.fillStyle = rl > 0 ? '#e6a03c' : '#7fd46a';
+        ctx.fillRect(rx, ry, bw * (1 - rl), bh);
+      }
+      if (rl > 0) hudText(clip ? 'RELOADING' : 'LOADING', mx, ry + bh + 11, 11, '#e6a03c', 'center', 400);
     }
     if (me) {
       // ---- aim line: from the main gun's muzzle to the cursor ----
@@ -1710,14 +1801,19 @@ function drawHUD() {
         }
       }
       if (c0.mgs) {
-        // which MGs can bear on the cursor right now (bright) vs. out of their arc (dim)
-        const parts = c0.mgs.map((m, i) => ({ text: `${m.pos} ${m.name}`, on: (you.mb >> i) & 1 }));
-        ctx.font = '400 11px Oswald, Impact, sans-serif';
-        const widths = parts.map(p => ctx.measureText(p.text).width), gap = 10;
-        let x = mx - (widths.reduce((a, b) => a + b, 0) + gap * (parts.length - 1)) / 2;
-        parts.forEach((p, i) => {
-          hudText(p.text, x + widths[i] / 2, my - 36, 11, p.on ? (mouse.rdown ? '#ffe9a8' : '#e8e0c0') : 'rgba(170,165,150,0.45)', 'center', 400);
-          x += widths[i] + gap;
+        // one row per MG under the main-gun reload bar: name (bright when it can bear on the cursor, dim when
+        // it's out of its arc) and a belt bar (green = rounds left, orange = changing belts)
+        const y0 = my + ((you.rl || 0) > 0 ? 44 : 30), bw = 34, bh = 4;
+        c0.mgs.forEach((m, i) => {
+          const y = y0 + i * 15, on = (you.mb >> i) & 1;
+          const ammo = Array.isArray(you.ma) ? you.ma[i] : m.clip, rl = Array.isArray(you.mr) ? you.mr[i] : 0;
+          hudText(m.name, mx - 4, y, 11, rl > 0 ? '#e6a03c' : on ? (mouse.rdown ? '#ffe9a8' : '#e8e0c0') : 'rgba(170,165,150,0.5)', 'right', 400);
+          const bx = mx + 2, by = y - bh / 2;
+          ctx.globalAlpha = on || rl > 0 ? 1 : 0.5;
+          ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
+          ctx.fillStyle = rl > 0 ? '#e6a03c' : '#7fd46a';
+          ctx.fillRect(bx, by, bw * (rl > 0 ? 1 - rl : ammo / m.clip), bh);
+          ctx.globalAlpha = 1;
         });
       }
     }
@@ -1781,40 +1877,42 @@ function sendInput(dt) {
   const th = (k('w') || k('arrowup')) - (k('s') || k('arrowdown'));
   const rot = (k('d') || k('arrowright')) - (k('a') || k('arrowleft'));
   const ax = cam.x + (mouse.x - W / 2) / cam.scale, ay = cam.y + (mouse.y - H / 2) / cam.scale;
-  send({ t: 'in', th, rot, ax: Math.round(ax), ay: Math.round(ay), f: mouse.down || autofire ? 1 : 0, m: mouse.rdown ? 1 : 0, cx: Math.round(cam.x), cy: Math.round(cam.y) });
+  send({ t: 'in', th, rot, ax: Math.round(ax), ay: Math.round(ay), f: (mouse.down || autofire) && !showBoard ? 1 : 0, m: mouse.rdown && !showBoard ? 1 : 0, cx: Math.round(cam.x), cy: Math.round(cam.y) });
 }
 
 // switch sides: only allowed in the break between battles
 function switchSides() {
-  if (!you || !phase) { if (you) bigMessage('You can only switch sides between battles', 2); return; }
+  // still choosing where to join: just pick the other side (the server enforces the mid-battle lock)
+  if (!you) { playerTeam = playerTeam === 'de' ? 'su' : 'de'; selectFaction(playerTeam); onTeamChanged(); return; }
+  if (!phase) { bigMessage('You can only switch sides between battles', 2); return; }
   playerTeam = playerTeam === 'de' ? 'su' : 'de';
   send({ t: 'switch', c: selCls[playerTeam] });
   try { localStorage.setItem('zitadelle.team', playerTeam); } catch (e) { /* ignore */ }
-  ui.spSig = '';
-  if (state === 'dead') buildPicker(ui.deathPicker, playerTeam);
+  if (state === 'dead') onTeamChanged();
 }
 function deploy(team) {
-  if (!connected) return;
+  if (!connected || dmap.sel == null) return;
   playerTeam = team;
   saveSel();
-  if (state === 'dead' && you) send({ t: 'respawn', team, sp: spawnSel == null ? undefined : spawnSel, c: selCls[team] });
+  dmap.last = { code: dmap.sel, team };   // remembered so the next redeploy starts zoomed in here
+  if (you) send({ t: 'respawn', team, sp: dmap.sel, c: selCls[team] });
   else {
-    send({ t: 'join', name: playerName, team, c: selCls[team] });
+    send({ t: 'join', name: playerName, team, sp: dmap.sel, c: selCls[team] });
     // first spawn into a battle already under way: play your side's intro (during the break it waits for the next battle)
     if (!phase) Music.play('intro', team);
   }
   state = 'play';
   autofire = false;
+  closeDeployMap();
   document.body.classList.add('playing');
-  ui.menu.classList.add('hidden'); ui.death.classList.add('hidden');
+  ui.menu.classList.add('hidden');
   Sound.init();
 }
 function backToMenu() {
   state = 'menu';
+  closeDeployMap();
   document.body.classList.remove('playing');
-  ui.death.classList.add('hidden');
   ui.menu.classList.remove('hidden');
-  buildPicker(ui.menuPicker, playerTeam);
 }
 function onPlayerDeath(e) {
   state = 'dead';
@@ -1826,9 +1924,358 @@ function onPlayerDeath(e) {
   document.getElementById('ddeaths').textContent = e.deaths;
   document.getElementById('dkills').textContent = e.kills;
   document.getElementById('dtime').textContent = `${Math.floor(e.secs / 60)}:${String(e.secs % 60).padStart(2, '0')}`;
-  ui.spSig = '';
+  // a moment on the wreck, then pull back to the battle map
+  setTimeout(() => { if (state === 'dead' && !dmap.open) { openDeployMap(); ui.death.classList.remove('hidden'); } }, 1300);
+}
+
+// =====================================================================
+// Battle map: choose where to deploy
+// =====================================================================
+// stage 'map': the whole battlefield, hover a highlighted point and click it; 'zoom': the camera swoops in;
+// 'pick': the vehicle panel is up. Used both when knocked out and when first joining.
+const dmap = { open: false, stage: 'map', sel: null, selX: 0, selY: 0, hover: null, opts: [], lookT: 0, last: null };
+// every rear area and capture point of your side, and whether you can deploy there right now
+// (mirrors the server's spawnOk, including enemies within reach of the point)
+function spawnOptions() {
+  const out = [];
+  REARS.forEach((r, k) => {
+    if (r.team !== playerTeam) return;
+    const lost = r.line && isLineDead(r.line);
+    out.push({ code: -1 - k, x: r.x, y: r.y, r: 380, id: r.name, name: 'Assembly area', rear: true, ok: !lost, why: lost ? 'lost' : '' });
+  });
+  CAP_POINTS.forEach((p, i) => {
+    const c = cps[i] || [], owner = OWNER[c[1]];
+    let why = '';
+    if (p.line && isLineDead(p.line)) why = 'line defeated';
+    else if (owner !== playerTeam) why = owner ? 'enemy held' : 'not held';
+    else if (c[2]) why = 'contested';
+    else if (vTanks.some(t => t.team !== playerTeam && Math.hypot(t.x - p.x, t.y - p.y) < CAP_R + 300)) why = 'enemies nearby';
+    out.push({ code: i, x: p.x, y: p.y, r: CAP_R, id: p.id, name: p.name, owner, ok: !why, why });
+  });
+  return out;
+}
+function openDeployMap() {
+  state = 'dead';
+  dmap.open = true; dmap.stage = 'map'; dmap.sel = null; dmap.hover = null;
+  document.body.classList.remove('playing');
+  ui.menu.classList.add('hidden');
+  ui.panel.classList.add('hidden');
+  ui.mapbar.classList.remove('hidden');
+  ui.death.classList.add('hidden');
   buildPicker(ui.deathPicker, playerTeam);
-  setTimeout(() => { if (state === 'dead') ui.death.classList.remove('hidden'); }, 1300);
+  // go straight back to where you last deployed, if that spot is still yours and safe
+  if (dmap.last && dmap.last.team === playerTeam) {
+    const o = spawnOptions().find(q => q.code === dmap.last.code);
+    if (o && o.ok) chooseSpawn(o);
+  }
+}
+function closeDeployMap() {
+  dmap.open = false; dmap.sel = null; dmap.hover = null;
+  ui.death.classList.add('hidden'); ui.panel.classList.add('hidden'); ui.mapbar.classList.add('hidden');
+  canvas.style.cursor = '';
+}
+function chooseSpawn(o) {
+  dmap.sel = o.code; dmap.selX = o.x; dmap.selY = o.y; dmap.stage = 'zoom'; dmap.hover = null; dmap.lookT = 0;
+  canvas.style.cursor = '';
+  ui.mapbar.classList.add('hidden');
+  ui.dpname.textContent = o.rear ? o.id : `${o.id} · ${o.name}`;
+}
+function showDeployPanel() {
+  dmap.stage = 'pick';
+  ui.panel.classList.remove('hidden');
+}
+function backToMap() {
+  dmap.stage = 'map'; dmap.sel = null;
+  ui.panel.classList.add('hidden');
+  ui.mapbar.classList.remove('hidden');
+}
+// side changed while on the map: the chosen point (if any) belonged to the other side
+function onTeamChanged() {
+  buildPicker(ui.deathPicker, playerTeam);
+  if (dmap.open && dmap.stage !== 'map') backToMap();
+}
+function updateDeployMap(dt) {
+  dmap.opts = spawnOptions();
+  if (showBoard) { dmap.hover = null; dmap.btnHover = false; canvas.style.cursor = ''; return; }
+  if (dmap.stage === 'map') {
+    // hover: the point under the cursor (small ones get a minimum target size)
+    let best = null, bd = Infinity;
+    for (const o of dmap.opts) {
+      const d = Math.hypot(W / 2 + (o.x - cam.x) * cam.scale - mouse.x, H / 2 + (o.y - cam.y) * cam.scale - mouse.y);
+      if (d < Math.max(22, o.r * cam.scale) && d < bd) { best = o; bd = d; }
+    }
+    dmap.hover = best;
+    canvas.style.cursor = best && best.ok ? 'pointer' : '';
+  } else {
+    // keep the server streaming the area around the chosen point (obstacles, fire)
+    if ((dmap.lookT -= dt) <= 0) { dmap.lookT = 0.5; send({ t: 'look', x: Math.round(dmap.selX), y: Math.round(dmap.selY) }); }
+    const o = dmap.opts.find(q => q.code === dmap.sel);
+    dmap.canDeploy = !!(o && o.ok); dmap.why = o ? o.why : 'unavailable';
+    dmap.btnHover = dmap.stage === 'pick' && overDeployButton(mouse.x, mouse.y);
+    canvas.style.cursor = dmap.btnHover && dmap.canDeploy ? 'pointer' : '';
+  }
+}
+// width the vehicle panel takes on the right (matches .deploypanel in style.css)
+const deployPanelW = () => Math.min(440, W * 0.42) + 32;
+const DEPLOY_BTN_R = 30;
+function deployButtonPos() {
+  return { x: W / 2 + (dmap.selX - cam.x) * cam.scale, y: H / 2 + (dmap.selY - cam.y) * cam.scale };
+}
+function overDeployButton(mx, my) {
+  const b = deployButtonPos();
+  return Math.hypot(mx - b.x, my - b.y) < DEPLOY_BTN_R + 6;
+}
+// round button on the chosen point with your side's emblem: click it to deploy
+function drawDeployButton() {
+  const { x, y } = deployButtonPos(), ok = dmap.canDeploy, hov = dmap.btnHover && ok;
+  const R = DEPLOY_BTN_R * (hov ? 1.08 : 1), pulse = 0.5 + 0.5 * Math.sin(now * 4);
+  ctx.save();
+  if (ok) {   // inviting ripple
+    ctx.strokeStyle = `rgba(246,226,122,${0.5 * (1 - pulse)})`; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x, y, R + 6 + pulse * 10, 0, TAU); ctx.stroke();
+  }
+  ctx.fillStyle = ok ? (hov ? 'rgba(48,46,34,0.95)' : 'rgba(24,23,17,0.9)') : 'rgba(40,38,34,0.75)';
+  ctx.beginPath(); ctx.arc(x, y, R, 0, TAU); ctx.fill();
+  ctx.strokeStyle = ok ? (hov ? '#fff6c8' : '#f6e27a') : 'rgba(150,145,130,0.6)'; ctx.lineWidth = hov ? 3.5 : 2.5;
+  ctx.beginPath(); ctx.arc(x, y, R, 0, TAU); ctx.stroke();
+  ctx.globalAlpha = ok ? 1 : 0.4;
+  ctx.translate(x, y); drawFactionMark(ctx, playerTeam, R * 0.5); ctx.translate(-x, -y);
+  ctx.globalAlpha = 1;
+  const cls = CLASSES[selCls[playerTeam]];
+  if (ok) hudText(`Deploy in ${cls ? cls.name : 'vehicle'}`, x, y + R + 18, 16, hov ? '#fff6c8' : '#f0e8c8');
+  else hudText(`Can't deploy — ${dmap.why}`, x, y + R + 18, 14, '#ff8a6a', 'center', 400);
+  ctx.restore();
+}
+function drawDeployMap(a) {
+  const sc = cam.scale, X = x => W / 2 + (x - cam.x) * sc, Y = y => H / 2 + (y - cam.y) * sc;
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.fillStyle = '#8e865a'; ctx.fillRect(0, 0, W, H);
+  // the steppe, villages, the two attack routes
+  ctx.fillStyle = '#a39a68'; ctx.fillRect(X(0), Y(0), WORLD * sc, WORLD * sc);
+  ctx.strokeStyle = '#5d5639'; ctx.lineWidth = 3; ctx.strokeRect(X(0), Y(0), WORLD * sc, WORLD * sc);
+  ctx.fillStyle = 'rgba(70,58,38,0.55)';
+  for (const b of BUILDINGS) ctx.fillRect(X(b.x) - 2, Y(b.y) - 2, 4, 4);
+  drawRoute(ctx, sc, X(0), Y(0), 3);
+  // the other side's rear areas, for orientation
+  for (const r of REARS) {
+    if (r.team === playerTeam) continue;
+    ctx.fillStyle = r.line && isLineDead(r.line) ? 'rgba(60,40,30,0.25)' : r.team === 'de' ? 'rgba(80,95,108,0.35)' : 'rgba(160,50,35,0.3)';
+    ctx.beginPath(); ctx.arc(X(r.x), Y(r.y), 380 * sc, 0, TAU); ctx.fill();
+  }
+  // your side's vehicles
+  ctx.fillStyle = TEAMS[playerTeam].mini;
+  for (const t of vTanks) if (t.team === playerTeam) { ctx.beginPath(); ctx.arc(X(t.x), Y(t.y), 3, 0, TAU); ctx.fill(); }
+  // spawn points: valid ones pulse, the hovered one lifts and names itself
+  const pulse = 0.5 + 0.5 * Math.sin(now * 4);
+  for (const o of dmap.opts) {
+    const hov = dmap.hover === o || dmap.sel === o.code, x = X(o.x), y = Y(o.y);
+    const R = Math.max(14, o.r * sc) * (hov && o.ok ? 1.12 : 1);
+    const col = o.rear ? TEAMS[playerTeam].mini : o.owner ? ptColor(o.owner) : '#6d6a55';
+    ctx.globalAlpha = a * (o.ok ? 0.95 : 0.4);
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(x, y, R, 0, TAU); ctx.fill();
+    ctx.globalAlpha = a;
+    if (o.ok) {
+      ctx.strokeStyle = hov ? '#fff6c8' : `rgba(246,226,122,${0.55 + 0.4 * pulse})`;
+      ctx.lineWidth = hov ? 4 : 2.5;
+      ctx.beginPath(); ctx.arc(x, y, R + 4 + (hov ? 0 : pulse * 3), 0, TAU); ctx.stroke();
+    } else if (!o.rear && cps[o.code] && cps[o.code][2]) {
+      ctx.strokeStyle = `rgba(255,90,60,${0.5 + 0.5 * Math.sin(now * 10)})`; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(x, y, R + 4, 0, TAU); ctx.stroke();
+    }
+    ctx.globalAlpha = a * (o.ok ? 1 : 0.6);
+    hudText(o.rear ? o.id.toUpperCase() : o.id, x, y, o.rear ? 12 : Math.max(12, Math.min(22, R * 0.7)), '#fff');
+    ctx.globalAlpha = a;
+    if (dmap.hover === o) {
+      hudText(o.name, x, y + R + 14, 13, '#e8e0c0', 'center', 400);
+      hudText(o.ok ? 'Click to deploy here' : `Unavailable — ${o.why}`, x, y + R + 30, 12, o.ok ? '#f6e27a' : '#ff8a6a', 'center', 400);
+    }
+  }
+  if (dmap.stage === 'map') {
+    hudText('CHOOSE WHERE TO DEPLOY', W / 2, 104, 24, '#e8e0c0');
+    hudText(`${TEAMS[playerTeam].name} · click a highlighted point`, W / 2, 128, 13, '#b9b195', 'center', 400);
+  }
+  ctx.restore();
+}
+
+// =====================================================================
+// Leaderboard (hold Tab)
+// =====================================================================
+let board = null, showBoard = false;
+function drawBoard() {
+  if (!showBoard || !board) return;
+  // darken everything behind it
+  ctx.fillStyle = 'rgba(8,8,5,0.62)'; ctx.fillRect(0, 0, W, H);
+  const teams = ['de', 'su'].map(tm => board.filter(r => TEAM_IDS[r[1]] === tm).sort((p, q) => q[3] - p[3]));
+  const n = Math.max(1, ...teams.map(t => t.length));
+  // laid out at a base size, then scaled up as far as the screen allows (rows get cut only if it still won't fit)
+  const k = clamp(Math.min((W - 48) / (2 * 380 + 16), (H - 60) / (58 + n * 22 + 10)), 0.85, 1.6);
+  const colW = 380 * k, rowH = 22 * k, head = 58 * k, gap = 8 * k;
+  const maxRows = Math.max(1, Math.floor((H - 60 - head - 10 * k) / rowH));
+  const rows = Math.min(maxRows, n);
+  const h = head + rows * rowH + 10 * k, y0 = Math.max(30, (H - h) / 2);
+  const f = v => v * k;   // font / offset sizes
+  teams.forEach((list, ti) => {
+    const tm = ti ? 'su' : 'de', x0 = W / 2 + (ti ? gap : -gap - colW);
+    ctx.fillStyle = 'rgba(22,21,15,0.94)'; ctx.fillRect(x0, y0, colW, h);
+    ctx.strokeStyle = 'rgba(93,86,57,0.9)'; ctx.lineWidth = 2; ctx.strokeRect(x0, y0, colW, h);
+    ctx.fillStyle = TEAMS[tm].mini; ctx.fillRect(x0, y0, colW, f(4));
+    const kills = list.reduce((m, r) => m + r[4], 0);
+    hudText(TEAMS[tm].name.toUpperCase(), x0 + f(12), y0 + f(21), 18, '#f0e8c8', 'left');
+    hudText(`${list.length} tanks · ${kills} kills`, x0 + colW - f(12), y0 + f(21), 12, '#a99f78', 'right', 400);
+    const cS = x0 + colW - f(92), cK = x0 + colW - f(50), cD = x0 + colW - f(16);
+    hudText('COMMANDER', x0 + f(40), y0 + f(45), 10, '#8d8668', 'left', 400);
+    hudText('SCORE', cS, y0 + f(45), 10, '#8d8668', 'right', 400);
+    hudText('K', cK, y0 + f(45), 10, '#8d8668', 'right', 400);
+    hudText('D', cD, y0 + f(45), 10, '#8d8668', 'right', 400);
+    list.slice(0, rows).forEach((r, i) => {
+      const y = y0 + head + i * rowH + rowH / 2 - f(2), mine = you && r[0] === you.id;
+      if (mine) { ctx.fillStyle = 'rgba(231,220,177,0.16)'; ctx.fillRect(x0 + 3, y - rowH / 2, colW - 6, rowH); }
+      else if (i % 2) { ctx.fillStyle = 'rgba(255,255,255,0.03)'; ctx.fillRect(x0 + 3, y - rowH / 2, colW - 6, rowH); }
+      ctx.globalAlpha = r[7] ? 1 : 0.5;     // knocked out: dimmed
+      drawInsignia(ctx, tm, r[6], x0 + f(22), y, f(15));
+      // clip long names short of the score column
+      ctx.save(); ctx.beginPath(); ctx.rect(x0 + f(34), y - rowH / 2, cS - f(50) - (x0 + f(34)), rowH); ctx.clip();
+      hudText(r[2], x0 + f(40), y, 13, mine ? '#fff6c8' : '#e8e0c0', 'left', mine ? 600 : 400);
+      ctx.restore();
+      hudText(fmt(r[3]), cS, y, 13, '#e8e0c0', 'right', 400);
+      hudText(String(r[4]), cK, y, 13, '#e8e0c0', 'right', 400);
+      hudText(String(r[5]), cD, y, 13, '#e8e0c0', 'right', 400);
+      ctx.globalAlpha = 1;
+    });
+    if (list.length > rows) hudText(`+${list.length - rows} more`, x0 + colW / 2, y0 + h - f(6), 11, '#8d8668', 'center', 400);
+  });
+}
+
+// =====================================================================
+// Faction info: each side's role, ranks and vehicles
+// =====================================================================
+const FACTION_INFO = {
+  de: { coalition: 'Axis', desc: 'In July 1943 Germany launched Operation Citadel, a pincer attack on the northern and southern '
+    + 'faces of the Kursk salient meant to encircle the Soviet armies inside it. The offensive was delayed for months to bring up '
+    + 'new Tiger and Panther tanks and Ferdinand tank destroyers, giving the defenders time to dig in.' },
+  su: { coalition: 'Allies', desc: 'Warned of the coming attack, the Red Army turned the Kursk salient into one of the most heavily '
+    + 'fortified battlefields in history, with deep belts of minefields, anti-tank guns and dug-in tanks. Once the German '
+    + 'assault had been worn down, Soviet counter-offensives seized the initiative on the Eastern Front for the rest of the war.' },
+};
+// coalition badge: a shield. Axis: black with a silver rim and a gold bar; Allies: olive with the white Allied star.
+function drawCoalitionBadge(c, coalition, w, h) {
+  const axis = coalition === 'Axis';
+  c.clearRect(0, 0, w, h);
+  const sx = w * 0.1, sw = w * 0.8, sy = h * 0.06, sh = h * 0.88;
+  c.beginPath();
+  c.moveTo(sx, sy); c.lineTo(sx + sw, sy); c.lineTo(sx + sw, sy + sh * 0.55);
+  c.quadraticCurveTo(sx + sw, sy + sh * 0.85, sx + sw / 2, sy + sh);
+  c.quadraticCurveTo(sx, sy + sh * 0.85, sx, sy + sh * 0.55); c.closePath();
+  c.fillStyle = axis ? '#1c1c1c' : '#4f5a2e'; c.fill();
+  c.lineWidth = w * 0.06; c.strokeStyle = axis ? '#bfc3c4' : '#d9cf9f'; c.stroke();
+  const cx = w / 2, cy = sy + sh * 0.45;
+  if (axis) {
+    c.fillStyle = '#c9a23a'; c.fillRect(sx + sw * 0.18, cy - h * 0.05, sw * 0.64, h * 0.1);
+  } else {
+    const r = w * 0.26;
+    c.beginPath(); c.arc(cx, cy, r * 1.12, 0, TAU); c.lineWidth = w * 0.035; c.strokeStyle = '#f2f2ea'; c.stroke();
+    c.beginPath();
+    for (let i = 0; i < 10; i++) { const rr = i % 2 ? r * 0.4 : r, a = -Math.PI / 2 + i * Math.PI / 5; c.lineTo(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr); }
+    c.closePath(); c.fillStyle = '#f2f2ea'; c.fill();
+  }
+}
+// real-life background for each vehicle, shown on hover in the faction info screen
+const VEHICLE_HISTORY = {
+  pz2c: 'Light tank from 1937, armed with a 20mm KwK 30 autocannon fed by 10-round magazines. Obsolete by 1943 and mostly used for reconnaissance and security duties.',
+  pz38t: 'The Czechoslovak LT vz. 38, taken over after the occupation of 1939. A reliable 37mm-armed light tank that made up much of the panzer force in 1940–41; its chassis later carried the Marder III and the Hetzer.',
+  luchs: 'The Panzer II Ausf. L "Luchs" (lynx), a purpose-built reconnaissance tank of 1943 with a 20mm KwK 38 and a fast, interleaved-wheel suspension. Only about 100 were built.',
+  pz3: 'Intended as Germany\'s main battle tank. By Kursk most carried the long 50mm KwK 39; outclassed by the T-34, it was being withdrawn from the front line and production ended in 1943.',
+  pz4: 'Germany\'s most-produced tank of the war, at around 8,500. From 1942 the long 75mm KwK 40 let it fight the T-34 on equal terms, and it was the most numerous German tank at Kursk.',
+  hetzer: 'The Jagdpanzer 38(t): a small, low tank destroyer on the Panzer 38(t) chassis with a 75mm PaK 39. Entered service in 1944, after Kursk; cheap to build, with about 2,800 made.',
+  stug: 'Sturmgeschütz III: a turretless assault gun on the Panzer III chassis, built for infantry support. With the long 75mm it became Germany\'s most-produced armoured vehicle, around 10,000, and one of its most effective tank killers.',
+  jgpz4: 'A low-slung tank destroyer on the Panzer IV chassis, introduced in 1944. Later versions carried the Panther\'s long 75mm L/70 gun.',
+  jagdpanther: 'A tank destroyer on the Panther chassis with the 88mm PaK 43, introduced in 1944. Often called the best tank destroyer of the war; only about 415 were built.',
+  ferdinand: '91 were built on Porsche\'s rejected Tiger chassis, with the 88mm PaK 43 and 200mm of frontal armour. They made their combat debut at Kursk, destroying many tanks but suffering for having no machine gun against infantry. Later rebuilt as the Elefant.',
+  brummbaer: 'Sturmpanzer IV: a Panzer IV chassis with a 150mm StuH 43 howitzer in a heavily armoured superstructure, built for knocking out fortifications. It first saw combat at Kursk.',
+  tiger: 'Heavy tank with the 88mm KwK 36 and 100mm of frontal armour, in service from 1942. Feared for its gun and protection, but complex and expensive; about 1,350 were built.',
+  panther: 'A medium tank designed in answer to the T-34, with sloped armour and a high-velocity 75mm KwK 42. Rushed into service for Kursk, where mechanical breakdowns crippled its debut.',
+  tiger2: 'The King Tiger: the heaviest German tank in series production, with the long 88mm KwK 43 and 150mm of sloped frontal armour. In service from 1944; about 490 were built.',
+  jagdtiger: 'At around 72 tonnes, the heaviest armoured vehicle of the war to reach production, armed with a 128mm PaK 44. Only some 80–90 were built, from 1944.',
+  t26: 'A Soviet development of the British Vickers 6-ton tank and the world\'s most numerous tank in the late 1930s. A thinly armoured infantry tank with a 45mm gun; a few survivors still served in 1943.',
+  bt7: 'A "fast tank" built on American J. Walter Christie\'s suspension, able to run on its road wheels with the tracks removed. Very quick but lightly armoured, and lost in large numbers in 1941.',
+  t70: 'A two-man light tank with a 45mm gun, built in large numbers in 1942–43, about 8,200 in all. The commander also had to load and fire the gun.',
+  t28: 'A pre-war multi-turreted medium tank with a short 76mm gun in the main turret and two machine-gun turrets at the front. About 500 were built; most were lost in 1941.',
+  t34: 'Sloped armour, a 76mm gun, wide tracks and a diesel engine made it a shock to the Germans in 1941. The most numerous tank at Kursk, and with the T-34-85 the most-produced tank of the war.',
+  t3485: 'The T-34 upgunned with an 85mm gun in a larger three-man turret, introduced in early 1944 in answer to the Tiger and Panther.',
+  kv1s: 'A lightened, faster version of the KV-1 heavy tank; the "S" stands for skorostnoy, "fast". Introduced in 1942 with thinner armour and a 76mm gun.',
+  kv85: 'A stop-gap heavy tank of late 1943: the KV-1S hull with a new turret and 85mm gun to counter the Tiger. Only about 150 were made before the IS-2 replaced it.',
+  is2: 'A heavy breakthrough tank named after Iosif Stalin, with a 122mm D-25T gun able to knock out Tigers and Panthers, in service from 1944. Slow to reload, and it carried only 28 rounds.',
+  su76: 'A light self-propelled gun on a lengthened T-70 chassis, with the 76mm ZiS-3 field gun in an open-topped compartment. Over 14,000 were built, second only to the T-34 among Soviet armoured vehicles.',
+  su85: 'A tank destroyer on the T-34 chassis with an 85mm gun, introduced in late 1943 after Kursk showed the need to fight Tigers and Panthers at range.',
+  su100: 'Successor to the SU-85 with a 100mm D-10S gun, from late 1944. One of the most powerful Soviet tank destroyers of the war.',
+  su122: 'An assault gun on the T-34 chassis with a 122mm M-30 howitzer for infantry support. It fought at Kursk, and production gave way to the SU-85 later in 1943.',
+  su152: 'Built in weeks in early 1943 by mounting a 152mm ML-20 gun-howitzer on the KV-1S chassis. Its success against German heavy armour at Kursk earned it the nickname Zveroboy, "beast killer".',
+  isu152: 'The 152mm gun-howitzer on the heavier IS chassis, from late 1943. Used as a heavy assault gun, tank destroyer and bunker buster, and kept in service long after the war.',
+};
+function placeInfoTip(x, y) {
+  const t = ui.infotip, w = t.offsetWidth, h = t.offsetHeight;
+  t.style.left = Math.max(8, Math.min(innerWidth - w - 8, x + 16)) + 'px';
+  t.style.top = (y + 18 + h > innerHeight - 8 ? y - h - 12 : y + 18) + 'px';
+}
+const infoOpen = () => !ui.info.classList.contains('hidden');
+function openInfo(team) { ui.info.classList.remove('hidden'); showInfo(team === 'su' ? 'su' : 'de'); }
+function closeInfo() { ui.info.classList.add('hidden'); ui.infotip.classList.add('hidden'); }
+function showInfo(team) {
+  ui.info.querySelectorAll('.infotabs button').forEach(b => b.classList.toggle('sel', b.dataset.team === team));
+  const body = document.getElementById('infobody');
+  const F = FACTION_INFO[team];
+  let html = `<div class="infohead">
+    <canvas width="160" height="160" data-mark="${team}"></canvas>
+    <div class="infotext">
+      <div class="infoname">${escapeHtml(TEAMS[team].name)}</div>
+      <div class="infocoal"><canvas width="64" height="72" data-coal="${F.coalition}"></canvas>${F.coalition}</div>
+      <p>${escapeHtml(F.desc)}</p>
+    </div>
+  </div>`;
+  // ranks: the first two are only held by AI crews; players start at the third and climb with score
+  // ranks left to right, lowest first, numbered
+  html += '<div class="infosec">Ranks</div><div class="rranks">';
+  RANKS[team].forEach((r, i) => {
+    const req = i < 2 ? '<span class="rscore muted">AI crews only</span>'
+      : i === 2 ? '<span class="rscore">Starting rank</span>'
+      : `<span class="rscore">${fmt(RANK_SCORE[i])} score</span>`;
+    html += `<div class="rcard"><span class="rnum">${i + 1}</span><canvas width="120" height="120" data-rank="${i}"></canvas>` +
+      `<b>${escapeHtml(r[1])}</b><small>${escapeHtml(r[0])}</small>${req}</div>`;
+  });
+  html += '</div>';
+  // vehicles by category; hover one for a little of its real history
+  html += '<div class="infosec">Vehicles</div>';
+  CATS.forEach((cat, ci) => {
+    const ids = sideClasses(team).filter(id => CLASSES[id].cat === ci);
+    if (!ids.length) return;
+    html += `<div class="infocat">${escapeHtml(cat.name)}</div><div class="infoveh">`;
+    for (const id of ids) html += `<div data-id="${id}"><canvas width="320" height="240" data-veh="${id}"></canvas>${escapeHtml(CLASSES[id].name)}</div>`;
+    html += '</div>';
+  });
+  body.innerHTML = html;
+  body.querySelectorAll('canvas[data-mark]').forEach(cv => {
+    const c = cv.getContext('2d'); c.save(); c.translate(cv.width / 2, cv.height / 2);
+    drawFactionMark(c, team, cv.width * 0.36); c.restore();
+  });
+  body.querySelectorAll('canvas[data-coal]').forEach(cv => drawCoalitionBadge(cv.getContext('2d'), cv.dataset.coal, cv.width, cv.height));
+  body.querySelectorAll('canvas[data-rank]').forEach(cv => {
+    const c = cv.getContext('2d');
+    drawInsignia(c, team, +cv.dataset.rank, cv.width / 2, cv.height / 2, cv.height * 0.7);
+  });
+  body.querySelectorAll('canvas[data-veh]').forEach(cv => drawPreview(cv, cv.dataset.veh, team, 0));
+  // history tooltip that follows the cursor
+  body.querySelectorAll('.infoveh > div').forEach(d => {
+    const txt = VEHICLE_HISTORY[d.dataset.id];
+    if (!txt) return;
+    d.addEventListener('mouseenter', () => {
+      ui.infotip.innerHTML = `<b>${escapeHtml(CLASSES[d.dataset.id].name)}</b>${escapeHtml(txt)}`;
+      ui.infotip.classList.remove('hidden');
+    });
+    d.addEventListener('mousemove', e => placeInfoTip(e.clientX, e.clientY));
+    d.addEventListener('mouseleave', () => ui.infotip.classList.add('hidden'));
+  });
 }
 
 // =====================================================================
@@ -1837,12 +2284,14 @@ function onPlayerDeath(e) {
 const ui = {
   menu: document.getElementById('menu'),
   death: document.getElementById('death'),
-  menuPicker: document.getElementById('menupick'),
   deathPicker: document.getElementById('deathpick'),
   status: document.getElementById('status'),
   deployBtn: document.getElementById('deploy'),
-  spawns: document.getElementById('spawns'),
-  spSig: '',
+  panel: document.getElementById('deploypanel'),
+  mapbar: document.getElementById('mapbar'),
+  info: document.getElementById('info'),
+  infotip: document.getElementById('infotip'),
+  dpname: document.getElementById('dpname'),
 };
 function setStatus(text) {
   ui.status.textContent = text;
@@ -1857,15 +2306,23 @@ function sideClasses(team) {
 function pickerDetail(el, id) {
   const c = CLASSES[id];
   const left = rsv[c.faction === 'de' ? 0 : 1][c.cat];
-  el.querySelector('.vdetail').innerHTML = `<b>${escapeHtml(c.name)}</b> <span class="vrole">${CATS[c.cat].name} · ${left} in reserve</span><br>${escapeHtml(c.desc)}<br>` +
-    `<span class="vsub">${Z.STEER_INFO[c.steer]}${c.mgs ? ' ' + Z.mgSummary(c) : ''}</span>`;
+  el.querySelector('.vdetail').innerHTML = `<b>${escapeHtml(c.name)}</b> <span class="vrole">${CATS[c.cat].name} · ${left} in reserve</span>`;
 }
 function buildPicker(el, team) {
   if (!el) return;
   if (!CLASSES[selCls[team]] || CLASSES[selCls[team]].faction !== team || !CLASSES[selCls[team]].enabled) selCls[team] = START_CLASS[team];
-  el.innerHTML = '<div class="vgrid"></div><div class="vdetail"></div>';
-  const grid = el.querySelector('.vgrid');
+  el.innerHTML = '<div class="vgroups"></div><div class="vdetail"></div>';
+  const groups = el.querySelector('.vgroups'), grids = {};
   for (const id of sideClasses(team)) {
+    const cat = CLASSES[id].cat;
+    if (!grids[cat]) {
+      const sec = document.createElement('div');
+      sec.className = 'vgroup';
+      sec.innerHTML = `<div class="vgrouphead" data-cat="${cat}">${escapeHtml(CATS[cat].name)}<span></span></div><div class="vgrid"></div>`;
+      groups.appendChild(sec);
+      grids[cat] = sec.querySelector('.vgrid');
+    }
+    const grid = grids[cat];
     const b = document.createElement('button');
     b.className = 'veh' + (id === selCls[team] ? ' sel' : '');
     b.dataset.id = id;
@@ -1874,9 +2331,8 @@ function buildPicker(el, team) {
     b.addEventListener('click', () => {
       if (b.classList.contains('empty')) return;
       selCls[team] = id; saveSel();
-      grid.querySelectorAll('.veh').forEach(v => v.classList.toggle('sel', v.dataset.id === id));
+      el.querySelectorAll('.veh').forEach(v => v.classList.toggle('sel', v.dataset.id === id));
       pickerDetail(el, id);
-      updateFactionLabels();
     });
     b.addEventListener('mouseenter', () => pickerDetail(el, id));
     b.addEventListener('mouseleave', () => pickerDetail(el, selCls[team]));
@@ -1896,59 +2352,28 @@ function refreshPicker(el) {
   el.dataset.sig = sig;
   el.querySelectorAll('.veh').forEach(b => {
     const c = CLASSES[b.dataset.id], n = r[c.cat];
-    b.querySelector('.vcat').textContent = `${CATS[c.cat].short} · ${n}`;
+    b.querySelector('.vcat').textContent = n <= 0 ? 'none left' : '';
     b.classList.toggle('empty', n <= 0);
   });
+  el.querySelectorAll('.vgrouphead').forEach(h => { h.querySelector('span').textContent = `${r[+h.dataset.cat]} in reserve`; });
   const cur = CLASSES[selCls[team]];
   if (cur && r[cur.cat] <= 0) {
     const alt = sideClasses(team).find(id => r[CLASSES[id].cat] > 0);
-    if (alt) { selCls[team] = alt; el.querySelectorAll('.veh').forEach(v => v.classList.toggle('sel', v.dataset.id === alt)); updateFactionLabels(); }
+    if (alt) { selCls[team] = alt; el.querySelectorAll('.veh').forEach(v => v.classList.toggle('sel', v.dataset.id === alt)); }
   }
   pickerDetail(el, selCls[team]);
 }
 function saveSel() {
   try { localStorage.setItem('zitadelle.cls', JSON.stringify(selCls)); } catch (e) { /* ignore */ }
 }
-function updateFactionLabels() {
-  factionBtns.forEach(b => { b.querySelector('small').textContent = CLASSES[selCls[b.dataset.team]].name; });
-}
-// redeploy picker: a rear assembly area (spawn code -1-k), or any held objective that's safe
-let spawnSel = null;
-function updateSpawnUI() {
-  // mirrors the server's spawnOk (enemy proximity is only checked there)
-  const owned = i => {
-    const p = CAP_POINTS[i], c = cps[i];
-    if (OWNER[c[1]] !== playerTeam || c[2] || (p.line && isLineDead(p.line))) return false;
-    if (playerTeam === DEFENDER && (c[3] || p.prev.some(j => cps[j][3]))) return false;
-    return true;
-  };
-  const rears = REARS.map((r, k) => ({ r, k })).filter(o => o.r.team === playerTeam);
-  const rearOk = o => !(o.r.line && isLineDead(o.r.line));
-  if (spawnSel != null && spawnSel >= 0 && !owned(spawnSel)) spawnSel = null;
-  if (spawnSel != null && spawnSel < 0 && !rearOk(rears.find(o => -1 - o.k === spawnSel) || { r: { line: 'A' } })) spawnSel = null;
-  if (spawnSel == null) { const o = rears.find(rearOk); spawnSel = o ? -1 - o.k : null; }
-  const sig = playerTeam + spawnSel + lineDead.join('') + cps.map(c => c[1] + '' + c[2] + c[3]).join('');
-  if (sig === ui.spSig) return;
-  ui.spSig = sig;
-  let html = '';
-  for (const o of rears) {
-    const code = -1 - o.k;
-    html += `<button data-i="${code}" class="${spawnSel === code ? 'sel' : ''}" ${rearOk(o) ? '' : 'disabled'}>${escapeHtml(o.r.name)}<small>${rearOk(o) ? 'assembly area' : 'lost'}</small></button>`;
-  }
-  CAP_POINTS.forEach((p, i) => {
-    html += `<button data-i="${i}" class="${spawnSel === i ? 'sel' : ''}" ${owned(i) ? '' : 'disabled'}>${p.id}<small>${escapeHtml(p.name)}</small></button>`;
-  });
-  ui.spawns.innerHTML = html;
-  ui.spawns.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { spawnSel = +b.dataset.i; ui.spSig = ''; }));
-}
-
-function updateUI() {
+function updateUI(dt) {
   if (state === 'dead') {
-    updateSpawnUI(); refreshPicker(ui.deathPicker);
+    if (dmap.open) updateDeployMap(dt);
+    refreshPicker(ui.deathPicker);
     const b = document.getElementById('tohq');
-    b.disabled = !phase; b.title = phase ? 'Switch sides (T)' : 'You can only switch sides between battles';
+    const can = !you || phase;
+    b.disabled = !can; b.title = can ? 'Switch sides (T)' : 'You can only switch sides between battles';
   }
-  if (state === 'menu') refreshPicker(ui.menuPicker);
 }
 
 // menu
@@ -1959,28 +2384,59 @@ try {
   Object.assign(selCls, JSON.parse(localStorage.getItem('zitadelle.cls') || '{}'));
 } catch (e) { /* storage unavailable */ }
 const factionBtns = [...document.querySelectorAll('.faction')];
+// each side's button shows its emblem: Balkenkreuz or red star
+factionBtns.forEach(b => {
+  const cv = b.querySelector('canvas'), c = cv.getContext('2d');
+  c.clearRect(0, 0, cv.width, cv.height);
+  c.save(); c.translate(cv.width / 2, cv.height / 2);
+  drawFactionMark(c, b.dataset.team, Math.min(cv.width, cv.height) * 0.36);
+  c.restore();
+});
 function selectFaction(team) {
   playerTeam = team;
   factionBtns.forEach(b => b.classList.toggle('sel', b.dataset.team === team));
-  buildPicker(ui.menuPicker, team);
 }
 factionBtns.forEach(b => b.addEventListener('click', () => selectFaction(b.dataset.team)));
 selectFaction(playerTeam === 'su' ? 'su' : 'de');
-updateFactionLabels();
 function startGame() {
-  if (!connected) return;
+  if (!connected || rosterMismatch) return;
   playerName = (nameInput.value.trim() || 'Commander').slice(0, 16);
   try { localStorage.setItem('zitadelle.name', nameInput.value.trim()); localStorage.setItem('zitadelle.team', playerTeam); } catch (e) { /* ignore */ }
-  deploy(playerTeam);
+  Sound.init();
+  openDeployMap();
 }
 ui.deployBtn.addEventListener('click', startGame);
 nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') startGame(); });
-document.getElementById('respawn').addEventListener('click', () => deploy(playerTeam));
-document.getElementById('tohq').addEventListener('click', () => { if (phase) switchSides(); });
-addEventListener('keydown', e => {
-  if (state === 'dead' && e.key === 'Enter' && !ui.death.classList.contains('hidden')) deploy(playerTeam);
-  if (state === 'dead' && e.key.toLowerCase() === 't') switchSides();
+document.getElementById('tohq').addEventListener('click', switchSides);
+document.getElementById('infobtn').addEventListener('click', () => openInfo(playerTeam));
+document.getElementById('mapinfo').addEventListener('click', () => openInfo(playerTeam));
+document.getElementById('infoclose').addEventListener('click', closeInfo);
+ui.info.querySelectorAll('.infotabs button').forEach(b => b.addEventListener('click', () => showInfo(b.dataset.team)));
+addEventListener('keydown', e => { if (e.key === 'Escape' && infoOpen()) { e.stopImmediatePropagation(); closeInfo(); } }, true);
+document.getElementById('tomenu').addEventListener('click', () => {
+  if (you) { send({ t: 'leave' }); you = null; }
+  backToMenu();
 });
+canvas.addEventListener('click', () => {
+  if (state !== 'dead' || !dmap.open || showBoard) return;
+  if (dmap.stage === 'map') { if (dmap.hover && dmap.hover.ok) chooseSpawn(dmap.hover); }
+  else if (dmap.stage === 'pick' && overDeployButton(mouse.x, mouse.y)) { if (dmap.canDeploy) deploy(playerTeam); }
+  else backToMap();   // zoomed in on a point: clicking anywhere else off the vehicle panel pulls back out
+});
+addEventListener('keydown', e => {
+  if (e.key === 'Tab' && e.target.tagName !== 'INPUT') {
+    // the board takes over: let go of everything (driving, firing) until Tab is released
+    e.preventDefault(); showBoard = true; document.body.classList.add('board-open');
+    keys.clear(); mouse.down = mouse.rdown = false;
+  }
+  if (showBoard) return;
+  if (state !== 'dead' || !dmap.open || e.target.tagName === 'INPUT') return;
+  if (e.key === 'Enter' && dmap.stage === 'pick' && dmap.canDeploy) deploy(playerTeam);
+  if (e.key === 'Escape') { if (dmap.stage !== 'map') backToMap(); else if (!you) backToMenu(); }
+  if (e.key.toLowerCase() === 't' && !e.repeat) switchSides();
+});
+addEventListener('keyup', e => { if (e.key === 'Tab') { showBoard = false; document.body.classList.remove('board-open'); } });
+addEventListener('blur', () => { showBoard = false; document.body.classList.remove('board-open'); });
 
 // =====================================================================
 // Main loop
@@ -2008,10 +2464,9 @@ function frame(ms) {
   updateLocal(dt);
   updateCamera(dt);
   sendInput(dt);
-  updateUI();
+  updateUI(dt);
   updateEngine(dt);
   render();
-  if (state === 'menu') factionBtns.forEach(b => drawPreview(b.querySelector('canvas'), selCls[b.dataset.team], b.dataset.team, now * 1.5));
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

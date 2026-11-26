@@ -116,10 +116,13 @@ function createGame(opts = {}) {
     gunReload(i) { const g = this.cls.guns[i]; return this.reloadT * g.reload * RELOAD_MULT[g.kind]; }
     initGuns() {
       this.cds = this.cls.guns.map(() => 0);
+      this.ammo = this.cls.guns.map(g => g.clip);          // rounds left in the magazine (magazine guns)
+      this.magLoad = this.cls.guns.map(() => false);       // true while changing magazines
       this.wasFiring = false;
       // secondary MGs: angle relative to their frame (so they ride with hull/turret), cooldown, can-bear flag
       const mgs = this.cls.mgs || [];
       this.mgRel = mgs.map(m => m.b); this.mgCd = mgs.map(() => 0); this.mgBear = mgs.map(() => false);
+      this.mgAmmo = mgs.map(m => m.clip); this.mgMag = mgs.map(() => 0);   // rounds left; seconds left changing belts
     }
     // Every vehicle fights with fixed stats; the differences come purely from its class definition.
     recalc() {
@@ -214,7 +217,8 @@ function createGame(opts = {}) {
       this.invuln = 0;
       // calibre class drives the sound/shake on clients: 0 light, 1 medium, 2 heavy
       const cal = g.w * g.size >= 0.38 || g.dmg >= 2.5 ? 2 : g.w * g.size > 0.27 || g.dmg >= 1.3 ? 1 : 0;
-      ev({ e: 'f', id: this.id, g: i, x: r1(m.x), y: r1(m.y), a: r3(fa), k: KINDS.indexOf(g.kind), b: cal, r: r1(r) });
+      ev({ e: 'f', id: this.id, g: i, x: r1(m.x), y: r1(m.y), a: r3(fa), k: KINDS.indexOf(g.kind), b: cal, r: r1(r),
+        mm: g.mm || 0, v: r2(g.spd) });
     }
     update(dt) {
       const inp = this.input, c = this.cls;
@@ -286,20 +290,34 @@ function createGame(opts = {}) {
       }
       this.wasFiring = firing;
       for (let i = 0; i < c.guns.length; i++) {
-        const loading = this.cds[i] > 0;
+        const g = c.guns[i], loading = this.cds[i] > 0;
         this.cds[i] -= dt;
         if (this.cds[i] <= 0) {
-          if (i === 0 && loading && c.guns[0].kind !== 'mg') pev(this, { e: 'rd' }); // breech closes
-          if (firing) { this.fire(i); this.cds[i] = Math.max(0, this.cds[i] + this.gunReload(i)); }
-          else this.cds[i] = 0;
+          // breech closes / fresh magazine seated (not between rounds of a magazine)
+          if (i === 0 && loading && g.kind !== 'mg' && (!g.clip || this.magLoad[i])) pev(this, { e: 'rd' });
+          if (g.clip && this.magLoad[i]) { this.ammo[i] = g.clip; this.magLoad[i] = false; }
+          if (firing) {
+            this.fire(i);
+            if (!g.clip) this.cds[i] = Math.max(0, this.cds[i] + this.gunReload(i));
+            else if (--this.ammo[i] > 0) this.cds[i] = Math.max(0, this.cds[i] + g.cycle);
+            else { this.cds[i] = this.gunReload(i); this.magLoad[i] = true; }      // empty: change magazines
+          } else this.cds[i] = 0;
         }
       }
       if (c.mgs) {
         for (let i = 0; i < c.mgs.length; i++) {
+          const m = c.mgs[i];
+          if (this.mgMag[i] > 0) {                                  // changing belts: can't fire until it's done
+            this.mgMag[i] -= dt;
+            if (this.mgMag[i] <= 0) { this.mgMag[i] = 0; this.mgAmmo[i] = m.clip; }
+            continue;
+          }
           this.mgCd[i] -= dt;
           if (this.mgCd[i] <= 0) {
-            if (inp.mg && phase === 'play' && this.mgBear[i]) { this.fireMg(i); this.mgCd[i] = Math.max(0, this.mgCd[i] + c.mgs[i].reload); }
-            else this.mgCd[i] = 0;
+            if (inp.mg && phase === 'play' && this.mgBear[i]) {
+              this.fireMg(i); this.mgCd[i] = Math.max(0, this.mgCd[i] + m.reload);
+              if (--this.mgAmmo[i] <= 0) { this.mgMag[i] = m.mag; this.mgCd[i] = 0; }
+            } else this.mgCd[i] = 0;
           }
         }
       }
@@ -427,7 +445,19 @@ function createGame(opts = {}) {
     const any = rearsOf(team);
     return any.length ? -1 - any[0] : null;
   }
-  // a held point with no enemies nearby is a valid forward spawn
+  // Validate a player's chosen spawn code (joining or redeploying); falls back and tells them if it's no good.
+  function checkSpawn(t, raw, team) {
+    let sp = Number.isInteger(raw) && raw < points.length && raw >= -REARS.length ? raw : null;
+    if (sp != null && sp >= 0 && !spawnOk(sp, team)) {
+      const was = points[sp];
+      sp = fallbackSpawn(sp, team);
+      pev(t, { e: 'm', text: `${was.id} is not safe — deploying at ${sp != null && sp >= 0 ? points[sp].id + ' · ' + points[sp].name : 'the rear'}`, d: 3 });
+    } else if (sp != null && sp < 0 && !rearOk(-1 - sp, team)) {
+      sp = null;
+      pev(t, { e: 'm', text: 'That assembly area is lost — deploying elsewhere', d: 3 });
+    }
+    return sp;
+  }
   // Deploy a vehicle from the side's reserves. Falls back to another available vehicle if that category
   // has run dry; returns false (and leaves the tank knocked out) when the side has nothing left.
   function deploy(t, want, sp) {
@@ -455,8 +485,6 @@ function createGame(opts = {}) {
   function spawnOk(i, team) {
     const p = points[i];
     if (!p || p.owner !== team || p.contested || (p.line && lineDead[p.line])) return false;
-    // defenders regroup further back: never on a point being fought over or one right behind it
-    if (team === DEFENDER && (p.active || p.prev.some(j => points[j].active))) return false;
     return !tanks.some(e => e.alive && e.team !== team && Math.hypot(e.x - p.x, e.y - p.y) < p.r + 300);
   }
 
@@ -999,9 +1027,10 @@ function createGame(opts = {}) {
         const locked = phase === 'play' && client.lockTeam && team !== client.lockTeam;
         if (locked) team = client.lockTeam;
         client.lockTeam = team;
+        client.lookX = client.lookY = undefined;
         client.tank = new Tank(team, cleanName(m.name), client);
         tanks.push(client.tank);
-        deploy(client.tank, m.c, Number.isInteger(m.sp) && m.sp < 0 && rearOk(-1 - m.sp, team) ? m.sp : null);
+        deploy(client.tank, m.c, checkSpawn(client.tank, m.sp, team));
         balanceBots();
         pev(client.tank, { e: 'm', text: locked ? 'You can only switch sides between battles' : team === ATTACKER ? 'Operation Zitadelle begins — push up both lines to Prokhorovka' : 'Hold both lines, comrade — they must not reach Prokhorovka', d: 4 });
         break;
@@ -1015,15 +1044,8 @@ function createGame(opts = {}) {
           }
           const switched = team !== t.team;
           if (switched) client.lockTeam = team;
-          let sp = Number.isInteger(m.sp) ? m.sp : null;
-          if (sp != null && sp >= 0 && !spawnOk(sp, team)) {
-            const was = points[sp];
-            sp = fallbackSpawn(sp, team);
-            pev(t, { e: 'm', text: `${was.id} is under attack — deploying at ${sp != null && sp >= 0 ? points[sp].id + ' · ' + points[sp].name : 'the rear'}`, d: 3 });
-          } else if (sp != null && sp < 0 && !rearOk(-1 - sp, team)) {
-            sp = null;
-            pev(t, { e: 'm', text: 'That assembly area is lost — deploying elsewhere', d: 3 });
-          }
+          const sp = checkSpawn(t, m.sp, team);
+          client.lookX = client.lookY = undefined;
           if (switched) { t.team = team; t.score = t.kills = t.deaths = 0; }
           deploy(t, m.c, sp);
           if (switched) balanceBots();
@@ -1053,6 +1075,10 @@ function createGame(opts = {}) {
           else client.camX = client.camY = undefined;
         }
         break;
+      // choosing where to deploy: stream the area around the point being looked at
+      case 'look':
+        client.lookX = num(m.x, 0, WORLD, CENTER); client.lookY = num(m.y, 0, WORLD, CENTER);
+        break;
       case 'view':
         client.viewW = num(m.w, 320, 4000, 1600); client.viewH = num(m.h, 240, 3000, 900);
         break;
@@ -1077,6 +1103,7 @@ function createGame(opts = {}) {
       sp = client.spec.id;
       cx = f ? f.x : CENTER; cy = f ? f.y : CENTER;
     }
+    if ((!t || !t.alive) && client.lookX !== undefined) { cx = client.lookX; cy = client.lookY; }
     const vs = viewSize(fov, client.viewW, client.viewH);
     const hw = vs.w / 2 + 250, hh = vs.h / 2 + 250;
     const near = (x, y, m = 0) => Math.abs(x - cx) < hw + m && Math.abs(y - cy) < hh + m;
@@ -1102,10 +1129,17 @@ function createGame(opts = {}) {
     snap.ln = LINES.map(L => (lineDead[L] ? 1 : 0));
     snap.rs = [reserves.de, reserves.su];
     snap.ph = phase === 'play' ? 0 : [winner === 'de' ? 1 : 2, Math.ceil(phaseEnd - time)];
+    // leaderboard: [id, team, name, score, kills, deaths, rank, alive]
+    if (includeBoard) snap.lb = tanks.map(k => [k.id, TEAM_IDS.indexOf(k.team), k.name, k.score, k.kills, k.deaths, k.rank, k.alive ? 1 : 0]);
     if (t) {
       snap.you = { id: t.id, alive: t.alive ? 1 : 0, score: t.score, rank: t.rank, deaths: t.deaths, c: t.cls.idx, kills: t.kills, fov: r3(t.fov), team: t.team,
-        rl: t.alive ? r2(clamp(t.cds[0] / t.gunReload(0), 0, 1)) : 0,
-        mb: t.cls.mgs ? t.mgBear.reduce((m, b, i) => m | (b ? 1 << i : 0), 0) : 0 };
+        // reload progress; a magazine gun only shows it while changing magazines (am = rounds left)
+        rl: !t.alive ? 0 : t.cls.guns[0].clip ? (t.magLoad[0] ? r2(clamp(t.cds[0] / t.gunReload(0), 0, 1)) : 0) : r2(clamp(t.cds[0] / t.gunReload(0), 0, 1)),
+        am: t.cls.guns[0].clip ? t.ammo[0] : undefined,
+        mb: t.cls.mgs ? t.mgBear.reduce((m, b, i) => m | (b ? 1 << i : 0), 0) : 0,
+        // MG rounds left, and belt-change progress (1 = just started, 0 = ready)
+        ma: t.cls.mgs ? t.mgAmmo : 0,
+        mr: t.cls.mgs ? t.mgMag.map((v, i) => r2(v / t.cls.mgs[i].mag)) : 0 };
     } else snap.sp = sp;
     return snap;
   }
