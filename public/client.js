@@ -393,6 +393,20 @@ const Sound = (() => {
     const o = voice(v, dn, dn * 0.6);           // sound travels: far shots arrive late
     R[kind](o, S, own, x1);
   };
+  // UI tick: a tiny burst of filtered noise, like a switch or dial click. One tick per entry in `at`
+  // (seconds from now), so [0, 0.05] is a quick double tick.
+  api.click = (at = [0], freq = 3400, vol = 0.14) => {
+    if (!ac || api.muted) return;
+    for (const dt0 of at) {
+      const t = ac.currentTime + dt0;
+      const src = ac.createBufferSource(); src.buffer = noise;
+      const f = ac.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = freq; f.Q.value = 4;
+      const g = ac.createGain(); g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(vol, t + 0.001); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.014);
+      src.connect(f); f.connect(g); g.connect(master);
+      src.start(t, Math.random() * 1.5); src.stop(t + 0.03);
+    }
+  };
   api.tone = (freqs, dur = 0.12, vol = 0.12) => {
     if (!ac || api.muted) return;
     freqs.forEach((fr, i) => {
@@ -445,7 +459,20 @@ let you = null, sp = null;
 // conquest state from the server: per point [prog -1..1, owner 0/1/2, contested], tickets, battle phase
 // per point: [prog, owner, contested, active, de in zone, su in zone, attacker may take, defender may take]
 let cps = CAP_POINTS.map(p => (p.line && p.k === 0 ? [1, 1, 0, 0, 0, 0, 0, 0] : !p.line ? [-1, 2, 0, 0, 0, 0, 0, 0] : [0, 0, 0, 0, 0, 0, 0, 0]));
-let lineDead = [0, 0], rsv = [RESERVES.de.slice(), RESERVES.su.slice()], phase = 0;
+let lineDead = [0, 0], rsv = [RESERVES.de.slice(), RESERVES.su.slice()], phase = 0, battleLeft = 0;
+let rsvDrops = [];   // recent reserve reductions, for the "-1" animation
+let rsvLines = LINES.map(() => RESERVES[ATTACKER].map(n => Math.floor(n / LINES.length)));   // attacker's pool per line
+// the reserve pool a deployment at spawn code sp would draw from (attacker: its line's pool)
+function poolArr(team, sp) {
+  const total = rsv[team === 'de' ? 0 : 1];
+  if (team !== ATTACKER) return total;
+  let L = sp != null && sp >= 0 ? CAP_POINTS[sp].line : sp != null && sp < 0 && REARS[-1 - sp] ? REARS[-1 - sp].line : null;
+  if (!L || !rsvLines[LINES.indexOf(L)]) {       // O1 / unknown: the surviving line with the most left
+    const live = LINES.filter((l, i) => rsvLines[i]).sort((a, b) => rsvLines[LINES.indexOf(b)].reduce((x, y) => x + y, 0) - rsvLines[LINES.indexOf(a)].reduce((x, y) => x + y, 0));
+    L = live[0];
+  }
+  return L && rsvLines[LINES.indexOf(L)] ? rsvLines[LINES.indexOf(L)] : total.map(() => 0);
+}
 const lineOf = i => CAP_POINTS[i].line;
 const isLineDead = L => !!lineDead[LINES.indexOf(L)];
 const OWNER = [null, 'de', 'su'];
@@ -509,8 +536,17 @@ function onMessage(m) {
   sp = m.sp === undefined ? null : m.sp;
   if (m.cp) cps = m.cp;
   if (m.ln) lineDead = m.ln;
-  if (m.rs) rsv = m.rs;
+  if (m.rs) {
+    // a reserve went down: float a "-1" off that count in the battle bar
+    m.rs.forEach((row, ti) => row.forEach((n, k) => {
+      const d = (rsv[ti] && rsv[ti][k]) - n;
+      if (d > 0) rsvDrops.push({ ti, k, n: d, t: now });
+    }));
+    rsv = m.rs;
+  }
   if (m.ph !== undefined) phase = m.ph;
+  if (m.rl) rsvLines = m.rl;
+  if (m.bt !== undefined) battleLeft = m.bt;
 }
 setInterval(() => send({ t: 'ping', c: performance.now() }), 2000);
 
@@ -548,7 +584,7 @@ function drawMarkWheel() {
     ctx.fillStyle = on ? 'rgba(150,40,30,0.88)' : 'rgba(20,19,14,0.78)'; ctx.fill();
     ctx.strokeStyle = on ? '#ff8a6a' : 'rgba(231,220,177,0.3)'; ctx.lineWidth = 1.5; ctx.stroke();
     const am = (a0 + a1) / 2, lr = (R + r0) / 2 + (on ? 3 : 0);
-    hudText(CATS[i].short, mw.sx + Math.cos(am) * lr, mw.sy + Math.sin(am) * lr - 4, on ? 17 : 15, on ? '#fff' : '#e8e0c0');
+    drawCatIcon(ctx, i, mw.sx + Math.cos(am) * lr, mw.sy + Math.sin(am) * lr - 5, on ? 8 : 7, on ? '#fff' : '#e8e0c0');
     hudText(CATS[i].name.replace(' tank destroyers', ' TD').replace(' tanks', '').replace('Tank destroyers', 'TD'), mw.sx + Math.cos(am) * lr, mw.sy + Math.sin(am) * lr + 11, 9, on ? '#ffd9cf' : '#a99f78', 'center', 400);
   }
   ctx.fillStyle = 'rgba(20,19,14,0.85)'; ctx.beginPath(); ctx.arc(mw.sx, mw.sy, r0 - 3, 0, TAU); ctx.fill();
@@ -568,11 +604,11 @@ function drawSpots() {
       ctx.strokeStyle = `rgba(235,60,45,${0.7 * (1 - ring)})`; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(sx, sy, 10 + ring * 40, 0, TAU); ctx.stroke();
     }
-    // red diamond with the vehicle type
-    const s = 13;
+    // red disc with the vehicle class symbol
+    const s = 12;
     ctx.fillStyle = 'rgba(190,40,30,0.92)'; ctx.strokeStyle = '#ffd9cf'; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.moveTo(sx, sy - s); ctx.lineTo(sx + s, sy); ctx.lineTo(sx, sy + s); ctx.lineTo(sx - s, sy); ctx.closePath(); ctx.fill(); ctx.stroke();
-    hudText(CATS[mk.c].short, sx, sy + 0.5, CATS[mk.c].short.length > 2 ? 9 : 11, '#fff', 'center', 600);
+    ctx.beginPath(); ctx.arc(sx, sy, s, 0, TAU); ctx.fill(); ctx.stroke();
+    drawCatIcon(ctx, mk.c, sx, sy + (mk.c >= 3 ? 0.5 : 0), 6.5, '#fff', null);
     if (off) {    // arrow pointing toward it
       const ang = Math.atan2(mk.y - cam.y, mk.x - cam.x);
       ctx.fillStyle = '#ff8a6a'; ctx.beginPath();
@@ -705,7 +741,8 @@ function drawEndScreen(myTeam) {
   // how it was won, and your battle
   const by = cy + fs * 1.08 + 28;
   ctx.globalAlpha = ease((a - 1.2) / 0.5);
-  hudText(wt === ATTACKER ? `${TEAMS[wt].name} breaks through to ${CAP_POINTS[O_IDX].name}` : `${TEAMS[wt].name} holds the line`,
+  hudText(phase[2] === 1 ? `Time runs out — ${TEAMS[wt].name} holds the line`
+    : wt === ATTACKER ? `${TEAMS[wt].name} breaks through to ${CAP_POINTS[O_IDX].name}` : `${TEAMS[wt].name} holds the line`,
     cx, by, 17, '#d9cf9f', 'center', 400);
   if (you) {
     ctx.globalAlpha = ease((a - 1.5) / 0.5);
@@ -917,7 +954,7 @@ function handleEvent(e) {
       const p = CAP_POINTS[e.i], ours = you && e.t === you.team;
       const label = `${p.id} (${p.name})`;
       if (you) {
-        bigMessage(`${TEAMS[e.t].name} ${e.n ? 'neutralizes' : 'captures'} ${label}`, 3, e.t);
+        bigMessage(`${TEAMS[e.t].name} ${e.n ? 'neutralized' : 'captured'} ${label}`, 3, e.t);
         Sound.tone(ours ? [392, 523, 659] : [440, 349, 262], 0.14, 0.07);
       }
       feed.push({ kn: TEAMS[e.t].name, kt: e.t, vn: label, vt: e.n ? null : e.t, sym: e.n ? '⊘' : '⚑', t: now });
@@ -934,7 +971,7 @@ function handleEvent(e) {
       if (!(you && Music.play('intro', you.team))) Music.fadeOut();
       break;
     case 'ld':
-      bigMessage(`Line ${e.l} defeated — ${TEAMS[DEFENDER].name} retook ${e.l}5`, 4);
+      bigMessage(`Line ${e.l} defeated — ${TEAMS[DEFENDER].name} retook ${e.l}5 · its reserves are lost`, 4);
       if (you) Sound.tone(you.team === DEFENDER ? [392, 523, 659] : [440, 349, 262], 0.16, 0.08);
       feed.push({ kn: TEAMS[DEFENDER].name, kt: DEFENDER, vn: `Line ${e.l}`, vt: null, sym: '✖', t: now });
       if (feed.length > 6) feed.shift();
@@ -1952,6 +1989,25 @@ function pill(x, y, w, h, f, color) {
   }
 }
 
+// Vehicle class symbols: diamonds for tanks (hollow = light, half = medium, solid = heavy), downward
+// triangles for tank destroyers (hollow = TD, solid = heavy TD). s = half-height. Dark edge keeps them
+// readable on any background.
+function drawCatIcon(c, cat, x, y, s, col, edge = 'rgba(0,0,0,0.75)') {
+  c.save(); c.translate(x, y); c.lineJoin = 'round';
+  const shape = () => {
+    c.beginPath();
+    if (cat <= 2) { c.moveTo(0, -s); c.lineTo(s * 0.8, 0); c.lineTo(0, s); c.lineTo(-s * 0.8, 0); }
+    else { c.moveTo(-s * 0.95, -s * 0.75); c.lineTo(s * 0.95, -s * 0.75); c.lineTo(0, s * 0.85); }
+    c.closePath();
+  };
+  const lw = Math.max(1.2, s * 0.22), solid = cat === 2 || cat === 4;
+  if (edge) { shape(); c.strokeStyle = edge; c.lineWidth = lw + 2.2; c.stroke(); }
+  shape();
+  if (solid) { c.fillStyle = col; c.fill(); }
+  if (cat === 1) { c.save(); c.clip(); c.fillStyle = col; c.fillRect(-s, 0, s * 2, s); c.restore(); }
+  c.strokeStyle = col; c.lineWidth = lw; c.stroke();
+  c.restore();
+}
 function drawPointIcon(i, x, y, R) {
   const [prog, ow, contested, active] = cps[i] || [0, 0, 0, 0];
   const owner = OWNER[ow];
@@ -1978,17 +2034,20 @@ function drawPointIcon(i, x, y, R) {
 
 function drawHUD() {
   const cx = W / 2;
+  rsvDrops = rsvDrops.filter(d => now - d.t < 1.2);
   // ---- battle status: both attack lines converging on O1, and both sides' reserves ----
   const myTeam = you ? you.team : null;
   {
     const step = 40, rowY = [24, 62], midY = 43;
     const x0 = cx - (5 * step + 20) / 2;
     const iconX = k => x0 + k * step;
-    const ox = x0 + 5 * step + 14;
+    const ox = x0 + 5 * step + 40;          // O1, with room before it for the elbow
+    const ex = x0 + 4 * step + 40;          // where both lines bend toward O1
     LINES.forEach((L, li) => {
       const y = rowY[li], dead = isLineDead(L);
       ctx.strokeStyle = dead ? 'rgba(220,70,50,0.6)' : 'rgba(230,220,190,0.4)'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(iconX(0), y); ctx.lineTo(iconX(4), y); ctx.lineTo(ox, midY); ctx.stroke();
+      // elbow connector: along the row, a right angle to O1's height, then straight into O1
+      ctx.beginPath(); ctx.moveTo(iconX(0), y); ctx.lineTo(ex, y); ctx.lineTo(ex, midY); ctx.lineTo(ox, midY); ctx.stroke();
       CAP_POINTS.forEach((p, i) => { if (p.line === L) drawPointIcon(i, iconX(p.k), y, 14); });
       if (dead) {
         ctx.strokeStyle = 'rgba(230,70,50,0.9)'; ctx.lineWidth = 3;
@@ -1997,21 +2056,52 @@ function drawHUD() {
       }
     });
     drawPointIcon(O_IDX, ox, midY, 17);
-    // reserves, one row per side, right-aligned against the objective panel
-    const rx = x0 - 34;
+    // reserves, one row per side, right-aligned against the objective panel: the side's emblem, then a
+    // column per vehicle class with its symbol on top and the count underneath
+    const colW = 30;
+    // deploying as the attacker at a chosen point: its row shows that line's pool (what you'll draw from)
+    const deployLine = state === 'dead' && dmap.open && dmap.sel != null && playerTeam === ATTACKER
+      ? (dmap.sel >= 0 ? CAP_POINTS[dmap.sel].line : REARS[-1 - dmap.sel] && REARS[-1 - dmap.sel].line) : null;
     ['de', 'su'].forEach((team, ti) => {
-      const r = rsv[ti], y = rowY[ti];
-      let x = rx;
-      ctx.font = '400 13px Oswald, Impact, sans-serif';
+      const lineView = team === ATTACKER && deployLine && rsvLines[LINES.indexOf(deployLine)];
+      const r = lineView ? rsvLines[LINES.indexOf(deployLine)] : rsv[ti], y = rowY[ti];
+      let x = x0 - 34 - colW / 2;
       for (let k = CATS.length - 1; k >= 0; k--) {
         if (!RESERVES[team][k]) continue;
-        const txt = `${CATS[k].short} ${r[k]}`;
-        hudText(txt, x, y, 13, r[k] <= 0 ? '#ff7a5c' : team === myTeam ? '#f6e27a' : '#e8e0c0', 'right', 400);
-        x -= ctx.measureText(txt).width + 12;
+        const col = r[k] <= 0 ? '#ff7a5c' : team === myTeam ? '#f6e27a' : '#e8e0c0';
+        drawCatIcon(ctx, k, x, y - 7, 5.5, col);
+        hudText(String(r[k]), x, y + 9, 12, col, 'center', 400);
+        // "-1" rising off the count and fading
+        for (const d of rsvDrops) {
+          if (lineView || d.ti !== ti || d.k !== k) continue;
+          const a = (now - d.t) / 1.2;
+          ctx.globalAlpha = clamp(1 - a, 0, 1) * clamp(a * 8, 0, 1);
+          hudText(`-${d.n}`, x + 12, y + 9 - a * 16, 12 + 3 * Math.max(0, 1 - a * 4), '#ff6a4a', 'left', 600);
+          ctx.globalAlpha = 1;
+        }
+        x -= colW;
       }
-      hudText(TEAMS[team].label, x - 4, y, 13, TEAMS[team].mini, 'right', 600);
+      // [emblem] NAME, right next to the first class column
+      // while deploying on a line, a small "A RESERVES" under the name says which pool is shown
+      const lx = x + colW / 2 - 4, label = TEAMS[team].label;
+      ctx.font = '600 13px Oswald, Impact, sans-serif';
+      const lw = ctx.measureText(label).width;
+      hudText(label, lx, lineView ? y - 4 : y, 13, TEAMS[team].mini, 'right', 600);
+      if (lineView) hudText(`${deployLine} RESERVES`, lx, y + 9, 9, '#b9b195', 'right', 400);
+      ctx.save(); ctx.translate(lx - lw - 15, y); drawFactionMark(ctx, team, 9); ctx.restore();
     });
-    if (myTeam) hudText(myTeam === ATTACKER ? 'ATTACK' : 'DEFEND', ox + 34, midY, 20, myTeam === ATTACKER ? '#f6e27a' : '#d9e3ea', 'left');
+    // battle clock just right of O1 (red and pulsing in the last two minutes), then ATTACK / DEFEND
+    let tx = ox + 34;
+    if (!phase && battleLeft > 0) {
+      const mm = Math.floor(battleLeft / 60), ss = String(battleLeft % 60).padStart(2, '0'), late = battleLeft <= 120;
+      const txt = `${mm}:${ss}`, fs = late ? 30 : 27;
+      ctx.globalAlpha = late ? 0.75 + 0.25 * Math.sin(now * 6) : 1;
+      hudText(txt, tx, midY + 1, fs, late ? '#ff6a4a' : '#e8e0c0', 'left', 600);
+      ctx.globalAlpha = 1;
+      ctx.font = `600 ${fs}px Oswald, Impact, sans-serif`;
+      tx += ctx.measureText('00:00').width + 22;              // fixed width so ATTACK/DEFEND doesn't jiggle as digits change
+    }
+    if (myTeam) hudText(myTeam === ATTACKER ? 'ATTACK' : 'DEFEND', tx, midY, 20, myTeam === ATTACKER ? '#f6e27a' : '#d9e3ea', 'left');
   }
 
   // ---- kill feed: top right, plain outlined text, newest on top ----
@@ -2322,7 +2412,8 @@ function spawnOptions() {
   REARS.forEach((r, k) => {
     if (r.team !== playerTeam) return;
     const lost = r.line && isLineDead(r.line);
-    out.push({ code: -1 - k, x: r.x, y: r.y, r: 380, id: r.name, name: 'Assembly area', rear: true, ok: !lost, why: lost ? 'lost' : '' });
+    const empty = !lost && !poolArr(playerTeam, -1 - k).some(n => n > 0);
+    out.push({ code: -1 - k, x: r.x, y: r.y, r: 380, id: r.name, name: 'Assembly area', rear: true, ok: !lost && !empty, why: lost ? 'lost' : empty ? 'out of reserves' : '' });
   });
   CAP_POINTS.forEach((p, i) => {
     const c = cps[i] || [], owner = OWNER[c[1]];
@@ -2331,6 +2422,7 @@ function spawnOptions() {
     else if (owner !== playerTeam) why = owner ? 'enemy held' : 'not held';
     else if (c[2]) why = 'contested';
     else if (vTanks.some(t => t.team !== playerTeam && Math.hypot(t.x - p.x, t.y - p.y) < CAP_R + 300)) why = 'enemies nearby';
+    else if (!poolArr(playerTeam, i).some(n => n > 0)) why = 'out of reserves';
     out.push({ code: i, x: p.x, y: p.y, r: CAP_R, id: p.id, name: p.name, owner, ok: !why, why });
   });
   return out;
@@ -2385,6 +2477,7 @@ function updateDeployMap(dt) {
       const d = Math.hypot(W / 2 + (o.x - cam.x) * cam.scale - mouse.x, H / 2 + (o.y - cam.y) * cam.scale - mouse.y);
       if (d < Math.max(22, o.r * cam.scale) && d < bd) { best = o; bd = d; }
     }
+    if (best && best.ok && (!dmap.hover || dmap.hover.code !== best.code)) Sound.click([0], 3600, 0.12);
     dmap.hover = best;
     canvas.style.cursor = best && best.ok ? 'pointer' : '';
   } else {
@@ -2392,7 +2485,18 @@ function updateDeployMap(dt) {
     if ((dmap.lookT -= dt) <= 0) { dmap.lookT = 0.5; send({ t: 'look', x: Math.round(dmap.selX), y: Math.round(dmap.selY) }); }
     const o = dmap.opts.find(q => q.code === dmap.sel);
     dmap.canDeploy = !!(o && o.ok); dmap.why = o ? o.why : 'unavailable';
+    // the point stopped being usable (lost, contested, enemies arrived): after a short grace period so a
+    // passing flicker doesn't throw you out, pull back to the map and say why
+    dmap.badT = dmap.canDeploy ? 0 : (dmap.badT || 0) + dt;
+    if (dmap.badT > 0.4) {
+      dmap.badT = 0;
+      bigMessage(`${o ? o.id : 'That point'} is no longer available — ${dmap.why}`, 3);
+      backToMap();
+      return;
+    }
+    const wasOver = dmap.btnHover;
     dmap.btnHover = dmap.stage === 'pick' && overDeployButton(mouse.x, mouse.y);
+    if (dmap.btnHover && !wasOver && dmap.canDeploy) Sound.click([0], 3600, 0.12);
     canvas.style.cursor = dmap.btnHover && dmap.canDeploy ? 'pointer' : '';
   }
 }
@@ -2758,7 +2862,7 @@ function sideClasses(team) {
 }
 function pickerDetail(el, id) {
   const c = CLASSES[id];
-  const left = rsv[c.faction === 'de' ? 0 : 1][c.cat];
+  const left = poolArr(c.faction, dmap.sel)[c.cat];
   el.querySelector('.vdetail').innerHTML = `<b>${escapeHtml(c.name)}</b> <span class="vrole">${CATS[c.cat].name} · ${left} in reserve</span>`;
 }
 function buildPicker(el, team) {
@@ -2799,7 +2903,7 @@ function buildPicker(el, team) {
 // keep the reserve badges current; an empty category can't be picked
 function refreshPicker(el) {
   if (!el || !el.dataset.team) return;
-  const team = el.dataset.team, r = rsv[team === 'de' ? 0 : 1];
+  const team = el.dataset.team, r = poolArr(team, dmap.sel);
   const sig = r.join(',');
   if (sig === el.dataset.sig) return;
   el.dataset.sig = sig;
