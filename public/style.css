@@ -36,7 +36,8 @@ input#name {
 }
 input#name:focus { border-color: #9b8f5c; }
 
-.factions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0; }
+.menulbl { margin-top: 18px; font-size: 13px; letter-spacing: 3px; text-transform: uppercase; color: #a99f78; }
+.factions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 8px 0 16px; }
 .faction {
   font: inherit; cursor: pointer; color: #ddd;
   background: #1a1a13; border: 2px solid #3e3a28;
@@ -67,27 +68,47 @@ kbd {
   border-bottom-width: 2px; background: #15150f; color: #d6cca3;
 }
 
-/* death */
-.dtitle { font-family: 'Black Ops One', Impact, sans-serif; font-size: 44px; color: #d9573f; letter-spacing: 3px; }
-#dkiller { color: #c9bf98; margin: 6px 0 18px; font-size: 17px; }
-.dstats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 20px; }
-.dstats div { background: #15150f; border: 1px solid #3e3a28; padding: 8px 4px; }
-.dstats span { display: block; font-size: 24px; color: #f0e8c8; }
-.dstats label { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #8d8668; }
+/* knocked out card (top-left, over the battle map) */
+.deathcard {
+  position: fixed; top: 16px; left: 16px; z-index: 11; width: 300px; max-width: calc(100vw - 32px);
+  background: rgba(28,27,20,0.9); border: 2px solid #5d5639; padding: 12px 14px; text-align: center;
+  box-shadow: 0 0 0 3px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.5);
+}
+.dtitle { font-family: 'Black Ops One', Impact, sans-serif; font-size: 28px; color: #d9573f; letter-spacing: 3px; line-height: 1.1; }
+#dkiller { color: #c9bf98; margin: 4px 0 10px; font-size: 14px; }
+.dstats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+.dstats div { background: #15150f; border: 1px solid #3e3a28; padding: 4px 2px; }
+.dstats span { display: block; font-size: 18px; color: #f0e8c8; line-height: 1.2; }
+.dstats label { font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: #8d8668; }
 .row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
 
-/* redeploy point picker */
-.spawnlbl { font-size: 12px; letter-spacing: 3px; text-transform: uppercase; color: #8d8668; margin-bottom: 6px; }
-.spawns { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; margin-bottom: 18px; }
-.spawns button {
-  font: inherit; font-size: 15px; letter-spacing: 1px; cursor: pointer; min-width: 64px;
-  padding: 6px 10px; background: #15150f; color: #d6cca3; border: 2px solid #3e3a28;
-  display: flex; flex-direction: column; align-items: center; line-height: 1.15;
+/* battle map: buttons along the bottom */
+.mapbar { position: fixed; left: 0; right: 0; bottom: 18px; z-index: 11; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; padding: 0 16px; }
+
+/* vehicle choice, after zooming in on a point: panel on the right */
+.deploypanel {
+  position: fixed; right: 16px; top: 50%; transform: translateY(-50%); z-index: 11;
+  width: min(440px, 42vw); max-height: calc(100vh - 120px); overflow-y: auto;
+  text-align: left; padding: 14px 16px 12px;
+  background: rgba(28,27,20,0.9); border: 2px solid #5d5639;
+  box-shadow: 0 0 0 3px rgba(0,0,0,.3), 0 14px 40px rgba(0,0,0,.5);
+  text-shadow: 0 1px 2px rgba(0,0,0,.9), 0 0 6px rgba(0,0,0,.6);
+  animation: dpin .25s ease-out;
 }
-.spawns button small { font-size: 10px; color: #8d8668; letter-spacing: .5px; }
-.spawns button:hover:not(:disabled) { border-color: #7a7250; }
-.spawns button.sel { border-color: #e7dcb1; background: #2b2a20; color: #fff; }
-.spawns button:disabled { opacity: .3; cursor: default; }
+@keyframes dpin { from { opacity: 0; transform: translate(24px, -50%); } to { opacity: 1; transform: translate(0, -50%); } }
+.dphead { margin-bottom: 8px; }
+#dpname { font-size: 24px; letter-spacing: 2px; color: #f0e8c8; text-transform: uppercase; }
+.deploypanel .picker { margin-bottom: 0; }
+.vgroup { margin-bottom: 10px; }
+.vgrouphead {
+  font-size: 12px; letter-spacing: 2.5px; text-transform: uppercase; color: #f0e8c8;
+  border-bottom: 1px solid rgba(240,232,200,.35); padding-bottom: 2px; margin-bottom: 5px;
+  display: flex; justify-content: space-between; align-items: baseline;
+}
+.vgrouphead span { font-size: 11px; letter-spacing: 1px; color: #d9cf9f; text-transform: none; }
+.deploypanel .veh { background: rgba(21,21,15,0.72); }
+.deploypanel .veh.sel { background: rgba(43,42,32,0.92); }
+.deploypanel .vdetail { color: #e2d9b4; }
 
 /* vehicle picker */
 .panel.wide { width: min(780px, calc(100vw - 32px)); }
@@ -102,7 +123,7 @@ kbd {
 .veh span { font-size: 12px; line-height: 1.1; letter-spacing: .3px; }
 .veh:hover { border-color: #7a7250; }
 .veh.sel { border-color: #e7dcb1; background: #2b2a20; color: #fff; }
-.vdetail { margin-top: 8px; min-height: 58px; font-size: 13px; color: #a99f78; line-height: 1.45; }
+.vdetail { margin-top: 8px; min-height: 22px; font-size: 13px; color: #a99f78; line-height: 1.45; }
 .vdetail b { color: #f0e8c8; font-weight: 600; font-size: 15px; }
 .vrole { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #8d8668; margin-left: 6px; }
 .vsub { font-size: 12px; color: #d9b46b; }

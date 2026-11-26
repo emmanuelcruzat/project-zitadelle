@@ -117,7 +117,7 @@ addEventListener('resize', resize);
 const keys = new Set();
 const mouse = { x: innerWidth / 2, y: innerHeight / 2, down: false };
 let autofire = false;
-let state = 'menu'; // menu | play | dead
+let state = 'menu'; // menu | play | dead (on the battle map choosing where to deploy: knocked out, or just joined)
 let devMode = false;
 // Zoom: the scroll wheel zooms in (never out past the normal view). Shift toggles the gunner's sight: a
 // magnified view centred on where you were aiming, which pans when the cursor is pushed to the edge.
@@ -407,9 +407,10 @@ function onMessage(m) {
   you = m.you || null;
   // the server has the final say on which side we are on (it refuses switches mid-battle)
   if (you && you.team && you.team !== playerTeam && state !== 'menu') {
-    playerTeam = you.team; ui.spSig = '';
-    if (state === 'dead') buildPicker(ui.deathPicker, playerTeam);
+    playerTeam = you.team;
+    if (state === 'dead') onTeamChanged();
   }
+  if (m.lb) board = m.lb;
   sp = m.sp === undefined ? null : m.sp;
   if (m.cp) cps = m.cp;
   if (m.ln) lineDead = m.ln;
@@ -749,7 +750,7 @@ function drawGun(c, g, r, rec, T) {
   }
   c.restore();
 }
-function drawInsignia(c, team, s) {
+function drawFactionMark(c, team, s) {   // hull marking: Balkenkreuz or red star, centred on the origin
   if (team === 'de') {
     c.fillStyle = '#f2f2ea';
     c.beginPath(); c.rect(-s, -s * 0.32, s * 2, s * 0.64); c.rect(-s * 0.32, -s, s * 0.64, s * 2); c.fill();
@@ -829,9 +830,9 @@ function drawTankModel(c, cls, teamId, r, hullA, turA, recoil, phase, flash, mgR
     c.fillStyle = 'rgba(0,0,0,0.18)';
     c.beginPath(); c.arc(cls.caseX * r - cw * 0.22, -ch * 0.2, r * 0.13, 0, TAU); c.fill();
     const ix = cls.caseX * r - cw * 0.5 - L * 0.12;
-    if (ix > -L * 0.46) { c.save(); c.translate(ix, 0); drawInsignia(c, teamId, r * 0.16); c.restore(); }
+    if (ix > -L * 0.46) { c.save(); c.translate(ix, 0); drawFactionMark(c, teamId, r * 0.16); c.restore(); }
   } else if (teamId !== 'wreck') {
-    c.save(); c.translate(-L * 0.36, 0); drawInsignia(c, teamId, r * 0.15); c.restore();
+    c.save(); c.translate(-L * 0.36, 0); drawFactionMark(c, teamId, r * 0.15); c.restore();
   }
   c.restore();
 
@@ -1341,6 +1342,22 @@ function drawLabels(t) {
 }
 
 function updateCamera(dt) {
+  if (state === 'dead' && dmap.open) {
+    // whole battlefield; or swooping down onto the chosen point (centred in the space left of the
+    // vehicle panel on the right)
+    let tx = CENTER, ty = CENTER, ts = Math.min(W / WORLD, (H - 170) / WORLD) * 0.94;
+    ty -= 20 / ts;
+    if (dmap.sel != null) {
+      ts = Math.max(W, H * 16 / 9) / (VIEW_W * 1.1) * 0.8;
+      tx = dmap.selX + deployPanelW() / 2 / ts; ty = dmap.selY;
+    }
+    const k = 1 - Math.exp(-dt * 4);
+    cam.scale = Math.exp(Math.log(cam.scale) + (Math.log(ts) - Math.log(cam.scale)) * k);
+    cam.x += (tx - cam.x) * k; cam.y += (ty - cam.y) * k;
+    cam.shake = 0;
+    if (dmap.stage === 'zoom' && Math.abs(Math.log(cam.scale / ts)) < 0.12 && Math.hypot(tx - cam.x, ty - cam.y) * cam.scale < 40) showDeployPanel();
+    return;
+  }
   let tx = cam.x, ty = cam.y, fov = 1.1, rate = 1.5;
   const me = myTank();
   if (you) {
@@ -1402,7 +1419,17 @@ function render() {
   ctx.fillRect(0, 0, W, H);
   ctx.setTransform(DPR * sc, 0, 0, DPR * sc, DPR * (W / 2 - cam.x * sc + shx), DPR * (H / 2 - cam.y * sc + shy));
   view = { x0: cam.x - W / 2 / sc, x1: cam.x + W / 2 / sc, y0: cam.y - H / 2 / sc, y1: cam.y + H / 2 / sc };
-
+  // battle map: fully drawn when zoomed out, fading away as the camera swoops in on a point
+  const mapA = state === 'dead' && dmap.open ? clamp((0.5 - sc) / 0.2, 0, 1) : 0;
+  if (mapA < 1) renderWorld();
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  if (mapA > 0) drawDeployMap(mapA);
+  if (state === 'dead' && dmap.open && dmap.stage === 'pick') drawDeployButton();
+  if (view2.sight && state === 'play') drawSightOverlay();
+  drawHUD();
+  drawBoard();
+}
+function renderWorld() {
   drawGround();
   drawPoints();
   drawMarks();
@@ -1427,10 +1454,6 @@ function render() {
     ctx.fillStyle = tx.color; ctx.fillText(tx.text, tx.x, tx.y - age * 30);
   }
   ctx.globalAlpha = 1;
-
-  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  if (view2.sight && state === 'play') drawSightOverlay();
-  drawHUD();
 }
 
 // =====================================================================
@@ -1611,7 +1634,7 @@ function drawHUD() {
       cx, H * 0.36 + 94, 17, '#e8e0c0', 'center', 400);
   }
 
-  drawMinimap();
+  if (!(state === 'dead' && dmap.open)) drawMinimap();
   if (connected) hudText(`${Math.round(ping)} ms`, W - 14, H - Math.min(170, W * 0.22) - 32, 12, '#e8e0c0', 'right', 400);
 
   if (you && state === 'play') {
@@ -1661,20 +1684,18 @@ function drawHUD() {
     }
 
     const mx = mouse.x, my = mouse.y;
-    ctx.strokeStyle = view2.sight ? 'rgba(0,0,0,0)' : 'rgba(255,255,255,0.9)'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(mx, my, 10, 0, TAU);
-    ctx.moveTo(mx - 18, my); ctx.lineTo(mx - 6, my); ctx.moveTo(mx + 6, my); ctx.lineTo(mx + 18, my);
-    ctx.moveTo(mx, my - 18); ctx.lineTo(mx, my - 6); ctx.moveTo(mx, my + 6); ctx.lineTo(mx, my + 18);
-    ctx.stroke();
-    // ---- reload ring ----
+    // cursor: a small dot
+    if (!view2.sight) {
+      ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.beginPath(); ctx.arc(mx, my, 3.5, 0, TAU); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.95)'; ctx.beginPath(); ctx.arc(mx, my, 2.25, 0, TAU); ctx.fill();
+    }
+    // ---- reload bar, under the cursor ----
     if (cls.guns[0].kind !== 'mg') {
-      const rl = you.rl || 0;
-      ctx.lineWidth = 4;
-      ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-      ctx.beginPath(); ctx.arc(mx, my, 24, 0, TAU); ctx.stroke();
-      ctx.strokeStyle = rl > 0 ? '#e6a03c' : '#7fd46a';
-      ctx.beginPath(); ctx.arc(mx, my, 24, -Math.PI / 2, -Math.PI / 2 + TAU * (1 - rl)); ctx.stroke();
-      if (rl > 0) hudText('LOADING', mx, my + 38, 11, '#e6a03c', 'center', 400);
+      const rl = you.rl || 0, bw = 40, bh = 5, rx = mx - bw / 2, ry = my + 10;
+      ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(rx - 1, ry - 1, bw + 2, bh + 2);
+      ctx.fillStyle = rl > 0 ? '#e6a03c' : '#7fd46a';
+      ctx.fillRect(rx, ry, bw * (1 - rl), bh);
+      if (rl > 0) hudText('LOADING', mx, ry + bh + 11, 11, '#e6a03c', 'center', 400);
     }
     if (me) {
       // ---- aim line: from the main gun's muzzle to the cursor ----
@@ -1786,35 +1807,36 @@ function sendInput(dt) {
 
 // switch sides: only allowed in the break between battles
 function switchSides() {
-  if (!you || !phase) { if (you) bigMessage('You can only switch sides between battles', 2); return; }
+  // still choosing where to join: just pick the other side (the server enforces the mid-battle lock)
+  if (!you) { playerTeam = playerTeam === 'de' ? 'su' : 'de'; selectFaction(playerTeam); onTeamChanged(); return; }
+  if (!phase) { bigMessage('You can only switch sides between battles', 2); return; }
   playerTeam = playerTeam === 'de' ? 'su' : 'de';
   send({ t: 'switch', c: selCls[playerTeam] });
   try { localStorage.setItem('zitadelle.team', playerTeam); } catch (e) { /* ignore */ }
-  ui.spSig = '';
-  if (state === 'dead') buildPicker(ui.deathPicker, playerTeam);
+  if (state === 'dead') onTeamChanged();
 }
 function deploy(team) {
-  if (!connected) return;
+  if (!connected || dmap.sel == null) return;
   playerTeam = team;
   saveSel();
-  if (state === 'dead' && you) send({ t: 'respawn', team, sp: spawnSel == null ? undefined : spawnSel, c: selCls[team] });
+  if (you) send({ t: 'respawn', team, sp: dmap.sel, c: selCls[team] });
   else {
-    send({ t: 'join', name: playerName, team, c: selCls[team] });
+    send({ t: 'join', name: playerName, team, sp: dmap.sel, c: selCls[team] });
     // first spawn into a battle already under way: play your side's intro (during the break it waits for the next battle)
     if (!phase) Music.play('intro', team);
   }
   state = 'play';
   autofire = false;
+  closeDeployMap();
   document.body.classList.add('playing');
-  ui.menu.classList.add('hidden'); ui.death.classList.add('hidden');
+  ui.menu.classList.add('hidden');
   Sound.init();
 }
 function backToMenu() {
   state = 'menu';
+  closeDeployMap();
   document.body.classList.remove('playing');
-  ui.death.classList.add('hidden');
   ui.menu.classList.remove('hidden');
-  buildPicker(ui.menuPicker, playerTeam);
 }
 function onPlayerDeath(e) {
   state = 'dead';
@@ -1826,9 +1848,215 @@ function onPlayerDeath(e) {
   document.getElementById('ddeaths').textContent = e.deaths;
   document.getElementById('dkills').textContent = e.kills;
   document.getElementById('dtime').textContent = `${Math.floor(e.secs / 60)}:${String(e.secs % 60).padStart(2, '0')}`;
-  ui.spSig = '';
+  // a moment on the wreck, then pull back to the battle map
+  setTimeout(() => { if (state === 'dead' && !dmap.open) { openDeployMap(); ui.death.classList.remove('hidden'); } }, 1300);
+}
+
+// =====================================================================
+// Battle map: choose where to deploy
+// =====================================================================
+// stage 'map': the whole battlefield, hover a highlighted point and click it; 'zoom': the camera swoops in;
+// 'pick': the vehicle panel is up. Used both when knocked out and when first joining.
+const dmap = { open: false, stage: 'map', sel: null, selX: 0, selY: 0, hover: null, opts: [], lookT: 0 };
+// every rear area and capture point of your side, and whether you can deploy there right now
+// (mirrors the server's spawnOk, including enemies within reach of the point)
+function spawnOptions() {
+  const out = [];
+  REARS.forEach((r, k) => {
+    if (r.team !== playerTeam) return;
+    const lost = r.line && isLineDead(r.line);
+    out.push({ code: -1 - k, x: r.x, y: r.y, r: 380, id: r.name, name: 'Assembly area', rear: true, ok: !lost, why: lost ? 'lost' : '' });
+  });
+  CAP_POINTS.forEach((p, i) => {
+    const c = cps[i] || [], owner = OWNER[c[1]];
+    let why = '';
+    if (p.line && isLineDead(p.line)) why = 'line defeated';
+    else if (owner !== playerTeam) why = owner ? 'enemy held' : 'not held';
+    else if (c[2]) why = 'contested';
+    else if (vTanks.some(t => t.team !== playerTeam && Math.hypot(t.x - p.x, t.y - p.y) < CAP_R + 300)) why = 'enemies nearby';
+    out.push({ code: i, x: p.x, y: p.y, r: CAP_R, id: p.id, name: p.name, owner, ok: !why, why });
+  });
+  return out;
+}
+function openDeployMap() {
+  state = 'dead';
+  dmap.open = true; dmap.stage = 'map'; dmap.sel = null; dmap.hover = null;
+  document.body.classList.remove('playing');
+  ui.menu.classList.add('hidden');
+  ui.panel.classList.add('hidden');
+  ui.mapbar.classList.remove('hidden');
+  ui.death.classList.add('hidden');
   buildPicker(ui.deathPicker, playerTeam);
-  setTimeout(() => { if (state === 'dead') ui.death.classList.remove('hidden'); }, 1300);
+}
+function closeDeployMap() {
+  dmap.open = false; dmap.sel = null; dmap.hover = null;
+  ui.death.classList.add('hidden'); ui.panel.classList.add('hidden'); ui.mapbar.classList.add('hidden');
+  canvas.style.cursor = '';
+}
+function chooseSpawn(o) {
+  dmap.sel = o.code; dmap.selX = o.x; dmap.selY = o.y; dmap.stage = 'zoom'; dmap.hover = null; dmap.lookT = 0;
+  canvas.style.cursor = '';
+  ui.mapbar.classList.add('hidden');
+  ui.dpname.textContent = o.rear ? o.id : `${o.id} · ${o.name}`;
+}
+function showDeployPanel() {
+  dmap.stage = 'pick';
+  ui.panel.classList.remove('hidden');
+}
+function backToMap() {
+  dmap.stage = 'map'; dmap.sel = null;
+  ui.panel.classList.add('hidden');
+  ui.mapbar.classList.remove('hidden');
+}
+// side changed while on the map: the chosen point (if any) belonged to the other side
+function onTeamChanged() {
+  buildPicker(ui.deathPicker, playerTeam);
+  if (dmap.open && dmap.stage !== 'map') backToMap();
+}
+function updateDeployMap(dt) {
+  dmap.opts = spawnOptions();
+  if (dmap.stage === 'map') {
+    // hover: the point under the cursor (small ones get a minimum target size)
+    let best = null, bd = Infinity;
+    for (const o of dmap.opts) {
+      const d = Math.hypot(W / 2 + (o.x - cam.x) * cam.scale - mouse.x, H / 2 + (o.y - cam.y) * cam.scale - mouse.y);
+      if (d < Math.max(22, o.r * cam.scale) && d < bd) { best = o; bd = d; }
+    }
+    dmap.hover = best;
+    canvas.style.cursor = best && best.ok ? 'pointer' : '';
+  } else {
+    // keep the server streaming the area around the chosen point (obstacles, fire)
+    if ((dmap.lookT -= dt) <= 0) { dmap.lookT = 0.5; send({ t: 'look', x: Math.round(dmap.selX), y: Math.round(dmap.selY) }); }
+    const o = dmap.opts.find(q => q.code === dmap.sel);
+    dmap.canDeploy = !!(o && o.ok); dmap.why = o ? o.why : 'unavailable';
+    dmap.btnHover = dmap.stage === 'pick' && overDeployButton(mouse.x, mouse.y);
+    canvas.style.cursor = dmap.btnHover && dmap.canDeploy ? 'pointer' : '';
+  }
+}
+// width the vehicle panel takes on the right (matches .deploypanel in style.css)
+const deployPanelW = () => Math.min(440, W * 0.42) + 32;
+const DEPLOY_BTN_R = 30;
+function deployButtonPos() {
+  return { x: W / 2 + (dmap.selX - cam.x) * cam.scale, y: H / 2 + (dmap.selY - cam.y) * cam.scale };
+}
+function overDeployButton(mx, my) {
+  const b = deployButtonPos();
+  return Math.hypot(mx - b.x, my - b.y) < DEPLOY_BTN_R + 6;
+}
+// round button on the chosen point with your side's emblem: click it to deploy
+function drawDeployButton() {
+  const { x, y } = deployButtonPos(), ok = dmap.canDeploy, hov = dmap.btnHover && ok;
+  const R = DEPLOY_BTN_R * (hov ? 1.08 : 1), pulse = 0.5 + 0.5 * Math.sin(now * 4);
+  ctx.save();
+  if (ok) {   // inviting ripple
+    ctx.strokeStyle = `rgba(246,226,122,${0.5 * (1 - pulse)})`; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x, y, R + 6 + pulse * 10, 0, TAU); ctx.stroke();
+  }
+  ctx.fillStyle = ok ? (hov ? 'rgba(48,46,34,0.95)' : 'rgba(24,23,17,0.9)') : 'rgba(40,38,34,0.75)';
+  ctx.beginPath(); ctx.arc(x, y, R, 0, TAU); ctx.fill();
+  ctx.strokeStyle = ok ? (hov ? '#fff6c8' : '#f6e27a') : 'rgba(150,145,130,0.6)'; ctx.lineWidth = hov ? 3.5 : 2.5;
+  ctx.beginPath(); ctx.arc(x, y, R, 0, TAU); ctx.stroke();
+  ctx.globalAlpha = ok ? 1 : 0.4;
+  ctx.translate(x, y); drawFactionMark(ctx, playerTeam, R * 0.5); ctx.translate(-x, -y);
+  ctx.globalAlpha = 1;
+  const cls = CLASSES[selCls[playerTeam]];
+  if (ok) hudText(`Deploy in ${cls ? cls.name : 'vehicle'}`, x, y + R + 18, 16, hov ? '#fff6c8' : '#f0e8c8');
+  else hudText(`Can't deploy — ${dmap.why}`, x, y + R + 18, 14, '#ff8a6a', 'center', 400);
+  ctx.restore();
+}
+function drawDeployMap(a) {
+  const sc = cam.scale, X = x => W / 2 + (x - cam.x) * sc, Y = y => H / 2 + (y - cam.y) * sc;
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.fillStyle = '#8e865a'; ctx.fillRect(0, 0, W, H);
+  // the steppe, villages, the two attack routes
+  ctx.fillStyle = '#a39a68'; ctx.fillRect(X(0), Y(0), WORLD * sc, WORLD * sc);
+  ctx.strokeStyle = '#5d5639'; ctx.lineWidth = 3; ctx.strokeRect(X(0), Y(0), WORLD * sc, WORLD * sc);
+  ctx.fillStyle = 'rgba(70,58,38,0.55)';
+  for (const b of BUILDINGS) ctx.fillRect(X(b.x) - 2, Y(b.y) - 2, 4, 4);
+  drawRoute(ctx, sc, X(0), Y(0), 3);
+  // the other side's rear areas, for orientation
+  for (const r of REARS) {
+    if (r.team === playerTeam) continue;
+    ctx.fillStyle = r.line && isLineDead(r.line) ? 'rgba(60,40,30,0.25)' : r.team === 'de' ? 'rgba(80,95,108,0.35)' : 'rgba(160,50,35,0.3)';
+    ctx.beginPath(); ctx.arc(X(r.x), Y(r.y), 380 * sc, 0, TAU); ctx.fill();
+  }
+  // your side's vehicles
+  ctx.fillStyle = TEAMS[playerTeam].mini;
+  for (const t of vTanks) if (t.team === playerTeam) { ctx.beginPath(); ctx.arc(X(t.x), Y(t.y), 3, 0, TAU); ctx.fill(); }
+  // spawn points: valid ones pulse, the hovered one lifts and names itself
+  const pulse = 0.5 + 0.5 * Math.sin(now * 4);
+  for (const o of dmap.opts) {
+    const hov = dmap.hover === o || dmap.sel === o.code, x = X(o.x), y = Y(o.y);
+    const R = Math.max(14, o.r * sc) * (hov && o.ok ? 1.12 : 1);
+    const col = o.rear ? TEAMS[playerTeam].mini : o.owner ? ptColor(o.owner) : '#6d6a55';
+    ctx.globalAlpha = a * (o.ok ? 0.95 : 0.4);
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(x, y, R, 0, TAU); ctx.fill();
+    ctx.globalAlpha = a;
+    if (o.ok) {
+      ctx.strokeStyle = hov ? '#fff6c8' : `rgba(246,226,122,${0.55 + 0.4 * pulse})`;
+      ctx.lineWidth = hov ? 4 : 2.5;
+      ctx.beginPath(); ctx.arc(x, y, R + 4 + (hov ? 0 : pulse * 3), 0, TAU); ctx.stroke();
+    } else if (!o.rear && cps[o.code] && cps[o.code][2]) {
+      ctx.strokeStyle = `rgba(255,90,60,${0.5 + 0.5 * Math.sin(now * 10)})`; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(x, y, R + 4, 0, TAU); ctx.stroke();
+    }
+    ctx.globalAlpha = a * (o.ok ? 1 : 0.6);
+    hudText(o.rear ? o.id.toUpperCase() : o.id, x, y, o.rear ? 12 : Math.max(12, Math.min(22, R * 0.7)), '#fff');
+    ctx.globalAlpha = a;
+    if (dmap.hover === o) {
+      hudText(o.name, x, y + R + 14, 13, '#e8e0c0', 'center', 400);
+      hudText(o.ok ? 'Click to deploy here' : `Unavailable — ${o.why}`, x, y + R + 30, 12, o.ok ? '#f6e27a' : '#ff8a6a', 'center', 400);
+    }
+  }
+  if (dmap.stage === 'map') {
+    hudText('CHOOSE WHERE TO DEPLOY', W / 2, 104, 24, '#e8e0c0');
+    hudText(`${TEAMS[playerTeam].name} · click a highlighted point`, W / 2, 128, 13, '#b9b195', 'center', 400);
+  }
+  ctx.restore();
+}
+
+// =====================================================================
+// Leaderboard (hold Tab)
+// =====================================================================
+let board = null, showBoard = false;
+function drawBoard() {
+  if (!showBoard || !board) return;
+  const colW = Math.min(380, (W - 48) / 2), rowH = 22, head = 58;
+  const teams = ['de', 'su'].map(tm => board.filter(r => TEAM_IDS[r[1]] === tm).sort((p, q) => q[3] - p[3]));
+  const maxRows = Math.max(1, Math.floor((H - 220 - head) / rowH));
+  const rows = Math.min(maxRows, Math.max(1, ...teams.map(t => t.length)));
+  const h = head + rows * rowH + 10, y0 = Math.max(90, (H - h) / 2);
+  teams.forEach((list, ti) => {
+    const tm = ti ? 'su' : 'de', x0 = W / 2 + (ti ? 8 : -8 - colW);
+    ctx.fillStyle = 'rgba(22,21,15,0.9)'; ctx.fillRect(x0, y0, colW, h);
+    ctx.fillStyle = TEAMS[tm].mini; ctx.fillRect(x0, y0, colW, 3);
+    const kills = list.reduce((n, r) => n + r[4], 0);
+    hudText(TEAMS[tm].name.toUpperCase(), x0 + 12, y0 + 20, 18, '#f0e8c8', 'left');
+    hudText(`${list.length} tanks · ${kills} kills`, x0 + colW - 12, y0 + 20, 12, '#a99f78', 'right', 400);
+    const cS = x0 + colW - 92, cK = x0 + colW - 50, cD = x0 + colW - 16;
+    hudText('COMMANDER', x0 + 40, y0 + 44, 10, '#8d8668', 'left', 400);
+    hudText('SCORE', cS, y0 + 44, 10, '#8d8668', 'right', 400);
+    hudText('K', cK, y0 + 44, 10, '#8d8668', 'right', 400);
+    hudText('D', cD, y0 + 44, 10, '#8d8668', 'right', 400);
+    list.slice(0, rows).forEach((r, i) => {
+      const y = y0 + head + i * rowH + rowH / 2 - 2, mine = you && r[0] === you.id;
+      if (mine) { ctx.fillStyle = 'rgba(231,220,177,0.16)'; ctx.fillRect(x0 + 3, y - rowH / 2, colW - 6, rowH); }
+      else if (i % 2) { ctx.fillStyle = 'rgba(255,255,255,0.03)'; ctx.fillRect(x0 + 3, y - rowH / 2, colW - 6, rowH); }
+      ctx.globalAlpha = r[7] ? 1 : 0.5;     // knocked out: dimmed
+      drawInsignia(ctx, tm, r[6], x0 + 22, y, 15);
+      // clip long names short of the score column
+      ctx.save(); ctx.beginPath(); ctx.rect(x0 + 34, y - rowH / 2, cS - 50 - (x0 + 34), rowH); ctx.clip();
+      hudText(r[2], x0 + 40, y, 13, mine ? '#fff6c8' : '#e8e0c0', 'left', mine ? 600 : 400);
+      ctx.restore();
+      hudText(fmt(r[3]), cS, y, 13, '#e8e0c0', 'right', 400);
+      hudText(String(r[4]), cK, y, 13, '#e8e0c0', 'right', 400);
+      hudText(String(r[5]), cD, y, 13, '#e8e0c0', 'right', 400);
+      ctx.globalAlpha = 1;
+    });
+    if (list.length > rows) hudText(`+${list.length - rows} more`, x0 + colW / 2, y0 + h - 6, 11, '#8d8668', 'center', 400);
+  });
 }
 
 // =====================================================================
@@ -1837,12 +2065,12 @@ function onPlayerDeath(e) {
 const ui = {
   menu: document.getElementById('menu'),
   death: document.getElementById('death'),
-  menuPicker: document.getElementById('menupick'),
   deathPicker: document.getElementById('deathpick'),
   status: document.getElementById('status'),
   deployBtn: document.getElementById('deploy'),
-  spawns: document.getElementById('spawns'),
-  spSig: '',
+  panel: document.getElementById('deploypanel'),
+  mapbar: document.getElementById('mapbar'),
+  dpname: document.getElementById('dpname'),
 };
 function setStatus(text) {
   ui.status.textContent = text;
@@ -1857,15 +2085,23 @@ function sideClasses(team) {
 function pickerDetail(el, id) {
   const c = CLASSES[id];
   const left = rsv[c.faction === 'de' ? 0 : 1][c.cat];
-  el.querySelector('.vdetail').innerHTML = `<b>${escapeHtml(c.name)}</b> <span class="vrole">${CATS[c.cat].name} · ${left} in reserve</span><br>${escapeHtml(c.desc)}<br>` +
-    `<span class="vsub">${Z.STEER_INFO[c.steer]}${c.mgs ? ' ' + Z.mgSummary(c) : ''}</span>`;
+  el.querySelector('.vdetail').innerHTML = `<b>${escapeHtml(c.name)}</b> <span class="vrole">${CATS[c.cat].name} · ${left} in reserve</span>`;
 }
 function buildPicker(el, team) {
   if (!el) return;
   if (!CLASSES[selCls[team]] || CLASSES[selCls[team]].faction !== team || !CLASSES[selCls[team]].enabled) selCls[team] = START_CLASS[team];
-  el.innerHTML = '<div class="vgrid"></div><div class="vdetail"></div>';
-  const grid = el.querySelector('.vgrid');
+  el.innerHTML = '<div class="vgroups"></div><div class="vdetail"></div>';
+  const groups = el.querySelector('.vgroups'), grids = {};
   for (const id of sideClasses(team)) {
+    const cat = CLASSES[id].cat;
+    if (!grids[cat]) {
+      const sec = document.createElement('div');
+      sec.className = 'vgroup';
+      sec.innerHTML = `<div class="vgrouphead" data-cat="${cat}">${escapeHtml(CATS[cat].name)}<span></span></div><div class="vgrid"></div>`;
+      groups.appendChild(sec);
+      grids[cat] = sec.querySelector('.vgrid');
+    }
+    const grid = grids[cat];
     const b = document.createElement('button');
     b.className = 'veh' + (id === selCls[team] ? ' sel' : '');
     b.dataset.id = id;
@@ -1874,9 +2110,8 @@ function buildPicker(el, team) {
     b.addEventListener('click', () => {
       if (b.classList.contains('empty')) return;
       selCls[team] = id; saveSel();
-      grid.querySelectorAll('.veh').forEach(v => v.classList.toggle('sel', v.dataset.id === id));
+      el.querySelectorAll('.veh').forEach(v => v.classList.toggle('sel', v.dataset.id === id));
       pickerDetail(el, id);
-      updateFactionLabels();
     });
     b.addEventListener('mouseenter', () => pickerDetail(el, id));
     b.addEventListener('mouseleave', () => pickerDetail(el, selCls[team]));
@@ -1896,59 +2131,28 @@ function refreshPicker(el) {
   el.dataset.sig = sig;
   el.querySelectorAll('.veh').forEach(b => {
     const c = CLASSES[b.dataset.id], n = r[c.cat];
-    b.querySelector('.vcat').textContent = `${CATS[c.cat].short} · ${n}`;
+    b.querySelector('.vcat').textContent = n <= 0 ? 'none left' : '';
     b.classList.toggle('empty', n <= 0);
   });
+  el.querySelectorAll('.vgrouphead').forEach(h => { h.querySelector('span').textContent = `${r[+h.dataset.cat]} in reserve`; });
   const cur = CLASSES[selCls[team]];
   if (cur && r[cur.cat] <= 0) {
     const alt = sideClasses(team).find(id => r[CLASSES[id].cat] > 0);
-    if (alt) { selCls[team] = alt; el.querySelectorAll('.veh').forEach(v => v.classList.toggle('sel', v.dataset.id === alt)); updateFactionLabels(); }
+    if (alt) { selCls[team] = alt; el.querySelectorAll('.veh').forEach(v => v.classList.toggle('sel', v.dataset.id === alt)); }
   }
   pickerDetail(el, selCls[team]);
 }
 function saveSel() {
   try { localStorage.setItem('zitadelle.cls', JSON.stringify(selCls)); } catch (e) { /* ignore */ }
 }
-function updateFactionLabels() {
-  factionBtns.forEach(b => { b.querySelector('small').textContent = CLASSES[selCls[b.dataset.team]].name; });
-}
-// redeploy picker: a rear assembly area (spawn code -1-k), or any held objective that's safe
-let spawnSel = null;
-function updateSpawnUI() {
-  // mirrors the server's spawnOk (enemy proximity is only checked there)
-  const owned = i => {
-    const p = CAP_POINTS[i], c = cps[i];
-    if (OWNER[c[1]] !== playerTeam || c[2] || (p.line && isLineDead(p.line))) return false;
-    if (playerTeam === DEFENDER && (c[3] || p.prev.some(j => cps[j][3]))) return false;
-    return true;
-  };
-  const rears = REARS.map((r, k) => ({ r, k })).filter(o => o.r.team === playerTeam);
-  const rearOk = o => !(o.r.line && isLineDead(o.r.line));
-  if (spawnSel != null && spawnSel >= 0 && !owned(spawnSel)) spawnSel = null;
-  if (spawnSel != null && spawnSel < 0 && !rearOk(rears.find(o => -1 - o.k === spawnSel) || { r: { line: 'A' } })) spawnSel = null;
-  if (spawnSel == null) { const o = rears.find(rearOk); spawnSel = o ? -1 - o.k : null; }
-  const sig = playerTeam + spawnSel + lineDead.join('') + cps.map(c => c[1] + '' + c[2] + c[3]).join('');
-  if (sig === ui.spSig) return;
-  ui.spSig = sig;
-  let html = '';
-  for (const o of rears) {
-    const code = -1 - o.k;
-    html += `<button data-i="${code}" class="${spawnSel === code ? 'sel' : ''}" ${rearOk(o) ? '' : 'disabled'}>${escapeHtml(o.r.name)}<small>${rearOk(o) ? 'assembly area' : 'lost'}</small></button>`;
-  }
-  CAP_POINTS.forEach((p, i) => {
-    html += `<button data-i="${i}" class="${spawnSel === i ? 'sel' : ''}" ${owned(i) ? '' : 'disabled'}>${p.id}<small>${escapeHtml(p.name)}</small></button>`;
-  });
-  ui.spawns.innerHTML = html;
-  ui.spawns.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { spawnSel = +b.dataset.i; ui.spSig = ''; }));
-}
-
-function updateUI() {
+function updateUI(dt) {
   if (state === 'dead') {
-    updateSpawnUI(); refreshPicker(ui.deathPicker);
+    if (dmap.open) updateDeployMap(dt);
+    refreshPicker(ui.deathPicker);
     const b = document.getElementById('tohq');
-    b.disabled = !phase; b.title = phase ? 'Switch sides (T)' : 'You can only switch sides between battles';
+    const can = !you || phase;
+    b.disabled = !can; b.title = can ? 'Switch sides (T)' : 'You can only switch sides between battles';
   }
-  if (state === 'menu') refreshPicker(ui.menuPicker);
 }
 
 // menu
@@ -1959,28 +2163,49 @@ try {
   Object.assign(selCls, JSON.parse(localStorage.getItem('zitadelle.cls') || '{}'));
 } catch (e) { /* storage unavailable */ }
 const factionBtns = [...document.querySelectorAll('.faction')];
+// each side's button shows its emblem: Balkenkreuz or red star
+factionBtns.forEach(b => {
+  const cv = b.querySelector('canvas'), c = cv.getContext('2d');
+  c.clearRect(0, 0, cv.width, cv.height);
+  c.save(); c.translate(cv.width / 2, cv.height / 2);
+  drawFactionMark(c, b.dataset.team, Math.min(cv.width, cv.height) * 0.36);
+  c.restore();
+});
 function selectFaction(team) {
   playerTeam = team;
   factionBtns.forEach(b => b.classList.toggle('sel', b.dataset.team === team));
-  buildPicker(ui.menuPicker, team);
 }
 factionBtns.forEach(b => b.addEventListener('click', () => selectFaction(b.dataset.team)));
 selectFaction(playerTeam === 'su' ? 'su' : 'de');
-updateFactionLabels();
 function startGame() {
   if (!connected) return;
   playerName = (nameInput.value.trim() || 'Commander').slice(0, 16);
   try { localStorage.setItem('zitadelle.name', nameInput.value.trim()); localStorage.setItem('zitadelle.team', playerTeam); } catch (e) { /* ignore */ }
-  deploy(playerTeam);
+  Sound.init();
+  openDeployMap();
 }
 ui.deployBtn.addEventListener('click', startGame);
 nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') startGame(); });
-document.getElementById('respawn').addEventListener('click', () => deploy(playerTeam));
-document.getElementById('tohq').addEventListener('click', () => { if (phase) switchSides(); });
-addEventListener('keydown', e => {
-  if (state === 'dead' && e.key === 'Enter' && !ui.death.classList.contains('hidden')) deploy(playerTeam);
-  if (state === 'dead' && e.key.toLowerCase() === 't') switchSides();
+document.getElementById('tohq').addEventListener('click', switchSides);
+document.getElementById('tomenu').addEventListener('click', () => {
+  if (you) { send({ t: 'leave' }); you = null; }
+  backToMenu();
 });
+canvas.addEventListener('click', () => {
+  if (state !== 'dead' || !dmap.open) return;
+  if (dmap.stage === 'map') { if (dmap.hover && dmap.hover.ok) chooseSpawn(dmap.hover); }
+  else if (dmap.stage === 'pick' && overDeployButton(mouse.x, mouse.y)) { if (dmap.canDeploy) deploy(playerTeam); }
+  else backToMap();   // zoomed in on a point: clicking anywhere else off the vehicle panel pulls back out
+});
+addEventListener('keydown', e => {
+  if (e.key === 'Tab' && e.target.tagName !== 'INPUT') { e.preventDefault(); showBoard = true; }
+  if (state !== 'dead' || !dmap.open || e.target.tagName === 'INPUT') return;
+  if (e.key === 'Enter' && dmap.stage === 'pick' && dmap.canDeploy) deploy(playerTeam);
+  if (e.key === 'Escape') { if (dmap.stage !== 'map') backToMap(); else if (!you) backToMenu(); }
+  if (e.key.toLowerCase() === 't' && !e.repeat) switchSides();
+});
+addEventListener('keyup', e => { if (e.key === 'Tab') showBoard = false; });
+addEventListener('blur', () => { showBoard = false; });
 
 // =====================================================================
 // Main loop
@@ -2008,10 +2233,9 @@ function frame(ms) {
   updateLocal(dt);
   updateCamera(dt);
   sendInput(dt);
-  updateUI();
+  updateUI(dt);
   updateEngine(dt);
   render();
-  if (state === 'menu') factionBtns.forEach(b => drawPreview(b.querySelector('canvas'), selCls[b.dataset.team], b.dataset.team, now * 1.5));
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
