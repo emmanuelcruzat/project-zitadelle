@@ -22,10 +22,8 @@
       <button class="faction de" data-team="de"><canvas width="240" height="180"></canvas><span class="fname">Germany</span></button>
       <button class="faction su" data-team="su"><canvas width="240" height="180"></canvas><span class="fname">Soviet Union</span></button>
     </div>
-    <div class="row">
-      <button id="deploy" class="btn">Deploy</button>
-      <button id="infobtn" class="btn secondary">Faction info</button>
-    </div>
+    <button id="deploy" class="btn">Deploy</button>
+    <div><button id="infobtn" class="btn secondary menuinfo">Nation info</button></div>
     <div id="status"></div>
   </div>
 </div>
@@ -45,7 +43,7 @@
 <!-- battle map controls (choosing a point) -->
 <div id="mapbar" class="mapbar hidden">
   <button id="tohq" class="btn secondary" title="Only between battles">Switch sides (T)</button>
-  <button id="mapinfo" class="btn secondary">Faction info</button>
+  <button id="mapinfo" class="btn secondary">Nation info</button>
   <button id="tomenu" class="btn secondary">Main menu</button>
 </div>
 
@@ -58,11 +56,30 @@
 <!-- faction info: ranks and vehicles of each side (from the start menu or the deploy map) -->
 <div id="info" class="overlay hidden">
   <div class="panel wide">
-    <div class="infotabs">
-      <button class="de" data-team="de">Germany</button>
-      <button class="su" data-team="su">Soviet Union</button>
+    <!-- first: the two coalitions side by side; each glows on hover, click to open it -->
+    <div id="infohero" class="infohero">
+      <button class="herohalf axis" data-coal="Axis">
+        <canvas width="200" height="226" data-coalhead="Axis"></canvas>
+        <span class="heroname">Axis</span>
+        <span class="herotag">Bound by the Pact of Steel</span>
+        <span class="heronations"><span data-n="de"><canvas width="64" height="64"></canvas>Germany</span><span data-n="it"><canvas width="64" height="64"></canvas>Italy</span></span>
+      </button>
+      <button class="herohalf allies" data-coal="Allies">
+        <canvas width="200" height="226" data-coalhead="Allies"></canvas>
+        <span class="heroname">Allies</span>
+        <span class="herotag">The United Nations Fight for Freedom</span>
+        <span class="heronations"><span data-n="su"><canvas width="64" height="64"></canvas>Soviet Union</span><span data-n="us"><canvas width="64" height="64"></canvas>United States</span><span data-n="gb"><canvas width="64" height="64"></canvas>United Kingdom</span></span>
+      </button>
     </div>
-    <div id="infobody"></div>
+    <!-- then: one coalition, with a selector for its nations -->
+    <div id="infonation" class="hidden">
+      <div class="infotabs">
+        <button id="infoback" class="infoback">&larr; Coalitions</button>
+        <div class="coalhead"><canvas width="64" height="72" id="coalbadge"></canvas><span id="coalname"></span></div>
+        <div id="nationtabs" class="nationtabs"></div>
+      </div>
+      <div id="infobody"></div>
+    </div>
     <button id="infoclose" class="btn secondary">Close (Esc)</button>
   </div>
 </div>

@@ -24,7 +24,10 @@ const r3 = v => Math.round(v * 1000) / 1000;
 // a requested vehicle is only valid for its own side
 const validClass = (id, team) => (CLASSES[id] && CLASSES[id].faction === team && CLASSES[id].enabled ? id : START_CLASS[team]);
 // score awards
-const SCORE = { kill: 100, capture: 150, neutral: 50 };
+// kill: Armor Destroyed; assist: Armor Destroyed Assist (dealt >= ASSIST_SHARE of the tank's health in the
+// last ASSIST_WINDOW s); damage: Armor Damaged, paid in DAMAGE_STEP chunks, worth this much per whole tank's health
+const SCORE = { kill: 100, assist: 50, damage: 60, capture: 150, neutral: 50 };
+const ASSIST_SHARE = 0.15, ASSIST_WINDOW = 30, DAMAGE_STEP = 0.1;
 
 function createGame(opts = {}) {
   let nextId = 1;
@@ -98,6 +101,7 @@ function createGame(opts = {}) {
       this.input.fire = this.input.mg = false; this.input.th = this.input.rot = 0;
       this.initGuns();
       this.lastHit = -99; this.ai = null;
+      this.dmgBy = new Map();   // enemy tank -> { amt: damage dealt this life, pend: not yet paid out, t: last hit }
     }
     // spawn code: >= 0 = inside that held capture point, -1-k = rear assembly area k, null = any live rear
     placeAt(spawn) {
@@ -147,14 +151,27 @@ function createGame(opts = {}) {
       this.resist = 9 * c.hp;
     }
     get rank() { return this.isBot ? this.botRank : rankForScore(this.score); }
-    addScore(n, text) {
+    // combat award: score plus a line in the player's award list ("Armor Destroyed +100")
+    award(label, n) {
+      if (n <= 0) return;
       this.score += n;
-      if (text && this.alive) pev(this, { e: 't', x: r1(this.x), y: r1(this.y - this.r - 24), text: `${text} +${n}`, c: '#f6e27a', s: 18 });
+      if (this.client) pev(this, { e: 'aw', l: label, n });
     }
     damage(amt, src, raw) {
       if (!this.alive || phase !== 'play' || (this.invuln > 0 && !raw)) return;
+      const dealt = Math.min(amt, this.hp);
       this.hp -= amt; this.lastHit = time;
       pev(this, { e: 'sh', a: r1(amt * 0.25) });
+      // remember who did what to us, for damage and assist awards
+      if (src && src.kind === 'tank' && src !== this && src.team !== this.team && dealt > 0) {
+        let d = this.dmgBy.get(src);
+        if (!d) { d = { amt: 0, pend: 0, t: 0 }; this.dmgBy.set(src, d); }
+        d.amt += dealt; d.pend += dealt; d.t = time;
+        if (this.hp > 0 && d.pend >= DAMAGE_STEP * this.maxHp) {
+          src.award('Armor Damaged', Math.round(d.pend / this.maxHp * SCORE.damage));
+          d.pend = 0;
+        }
+      }
       if (this.hp <= 0) killTank(this, src);
     }
     muzzle(i) {
@@ -333,11 +350,15 @@ function createGame(opts = {}) {
     let kn = 'Defensive line', kt = null, kc = '';
     if (src && src.kind === 'tank') {
       kn = src.name; kt = src.team; kc = src.cls.name;
-      if (src.team !== t.team) { src.addScore(SCORE.kill); src.kills++; }
-      pev(src, { e: 'm', text: `You knocked out ${t.name}`, d: 2.5 });
+      if (src.team !== t.team) { src.award('Armor Destroyed', SCORE.kill); src.kills++; }
     } else if (src && src.kind === 'ob') {
       kn = src.type === 'bunker' ? 'Pillbox' : 'Fuel drum';
     }
+    // everyone else who did real damage recently gets an assist
+    for (const [a, d] of t.dmgBy) {
+      if (a !== src && a.team !== t.team && d.amt >= ASSIST_SHARE * t.maxHp && time - d.t <= ASSIST_WINDOW) a.award('Armor Destroyed Assist', SCORE.assist);
+    }
+    t.dmgBy.clear();
     ev({ e: 'k', kn, kt, kc, kr: src && src.kind === 'tank' ? src.rank : -1, vn: t.name, vt: t.team, vc: t.cls.name, vr: t.rank });
     if (t.client) {
       pev(t, { e: 'die', kn, kt, kc, score: t.score, kills: t.kills, deaths: t.deaths, secs: Math.floor(time - t.spawnTime) });
@@ -352,7 +373,7 @@ function createGame(opts = {}) {
   const capRate = n => (1 + 0.5 * (Math.min(n, 3) - 1)) / CAP_TIME;   // 1, 1.5, 2x for 1, 2, 3+ tanks
 
   function rewardZone(p, team, n, text) {
-    for (const t of tanks) if (t.alive && t.team === team && inZone(t, p)) t.addScore(n, text);
+    for (const t of tanks) if (t.alive && t.team === team && inZone(t, p)) t.award(text, n);
   }
 
   function updatePoints(dt) {
@@ -384,13 +405,13 @@ function createGame(opts = {}) {
         const by = enemyOf(p.owner);
         p.owner = null;
         ev({ e: 'cp', i: p.i, t: by, n: 1 });
-        rewardZone(p, by, SCORE.neutral, 'NEUTRALIZED');
+        rewardZone(p, by, SCORE.neutral, 'Point Neutralized');
         updateAccess();
       }
       if (!p.owner && Math.abs(p.prog) >= 1) {
         p.owner = p.prog > 0 ? 'de' : 'su';
         ev({ e: 'cp', i: p.i, t: p.owner, n: 0 });
-        rewardZone(p, p.owner, SCORE.capture, 'CAPTURED');
+        rewardZone(p, p.owner, SCORE.capture, 'Point Captured');
         // the defender reaching an attack line's start point defeats that line
         if (p.line && p.k === 0 && p.owner === DEFENDER && !lineDead[p.line]) {
           lineDead[p.line] = true;
@@ -410,11 +431,7 @@ function createGame(opts = {}) {
       else if (LINES.every(L => lineDead[L])) w = DEFENDER;
       else if (spent(ATTACKER)) w = DEFENDER;
       else if (spent(DEFENDER)) w = ATTACKER;
-      if (w) {
-        winner = w;
-        phase = 'end'; phaseEnd = time + ROUND_END;
-        ev({ e: 're', w: winner });
-      }
+      if (w) forceWin(w);
     } else if (time >= phaseEnd) {
       phase = 'play'; winner = null;
       resetPoints();
@@ -426,6 +443,12 @@ function createGame(opts = {}) {
       }
       ev({ e: 'rn' });
     }
+  }
+
+  function forceWin(w) {
+    winner = w;
+    phase = 'end'; phaseEnd = time + ROUND_END;
+    ev({ e: 're', w: winner });
   }
 
   // The chosen point is under attack: walk back along the line toward your own side (attackers toward
@@ -1032,7 +1055,9 @@ function createGame(opts = {}) {
         tanks.push(client.tank);
         deploy(client.tank, m.c, checkSpawn(client.tank, m.sp, team));
         balanceBots();
-        pev(client.tank, { e: 'm', text: locked ? 'You can only switch sides between battles' : team === ATTACKER ? 'Operation Zitadelle begins — push up both lines to Prokhorovka' : 'Hold both lines, comrade — they must not reach Prokhorovka', d: 4 });
+        if (locked) pev(client.tank, { e: 'm', text: 'You can only switch sides between battles', d: 4 });
+        // joining a battle in progress: the client plays its side's intro (during the break it waits for the next battle)
+        if (phase === 'play') pev(client.tank, { e: 'intro', t: team });
         break;
       }
       case 'respawn':
@@ -1076,8 +1101,20 @@ function createGame(opts = {}) {
         }
         break;
       // choosing where to deploy: stream the area around the point being looked at
+      // spot an enemy: tell everyone on your side (at most one mark a second per player)
+      case 'mark':
+        if (t && t.alive && phase === 'play' && Number.isInteger(m.c) && m.c >= 0 && m.c < CATS.length && time - (client.lastMark ?? -9) >= 1) {
+          client.lastMark = time;
+          const mk = { e: 'mk', x: r1(num(m.x, 0, WORLD, t.x)), y: r1(num(m.y, 0, WORLD, t.y)), c: m.c, by: t.name };
+          for (const k of tanks) if (k.client && k.team === t.team) pev(k, mk);
+        }
+        break;
       case 'look':
         client.lookX = num(m.x, 0, WORLD, CENTER); client.lookY = num(m.y, 0, WORLD, CENTER);
+        break;
+      // dev only: end the battle now with the given side winning (for testing the end-of-battle flow and music)
+      case 'dev_end':
+        if (opts.dev && phase === 'play') forceWin(m.w === 'su' ? 'su' : 'de');
         break;
       case 'view':
         client.viewW = num(m.w, 320, 4000, 1600); client.viewH = num(m.h, 240, 3000, 900);
@@ -1130,6 +1167,7 @@ function createGame(opts = {}) {
     snap.rs = [reserves.de, reserves.su];
     snap.ph = phase === 'play' ? 0 : [winner === 'de' ? 1 : 2, Math.ceil(phaseEnd - time)];
     // leaderboard: [id, team, name, score, kills, deaths, rank, alive]
+    if (includeBoard) snap.on = clients.size;   // people connected (playing or on the menu)
     if (includeBoard) snap.lb = tanks.map(k => [k.id, TEAM_IDS.indexOf(k.team), k.name, k.score, k.kills, k.deaths, k.rank, k.alive ? 1 : 0]);
     if (t) {
       snap.you = { id: t.id, alive: t.alive ? 1 : 0, score: t.score, rank: t.rank, deaths: t.deaths, c: t.cls.idx, kills: t.kills, fov: r3(t.fov), team: t.team,

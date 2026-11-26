@@ -20,26 +20,32 @@ const FILES = {
   '/shared.js':  ['shared/shared.js', 'application/javascript; charset=utf-8'],
 };
 
-// Music in public/music/. Map each slot to a file name there; only these files are ever served.
+// Music in public/music/. Each slot lists one or more file names there (the client picks one at random);
+// only these files are ever served.
 const MUSIC = {
-  'intro-de':   'haselnuss.mp3',
-  'victory-de': 'erika.mp3',
-  'intro-su':   'lets_go.mp3',
-  'victory-su': 'invincible_and_legendary.mp3',
+  'intro-de':   ['wacht_am_rhein_intro.mp3'],
+  'victory-de': ['erika.mp3'],
+  'intro-su':   ['lets_go_intro.mp3'],
+  'victory-su': ['invincible_and_legendary.mp3'],
 };
 const MUSIC_TYPES = { mp3: 'audio/mpeg', ogg: 'audio/ogg', wav: 'audio/wav', m4a: 'audio/mp4' };
-// /music/<slot> -> [file, content type]
+// /music/<slot>/<n> -> [file, content type]
 function musicFile(url) {
-  const m = /^\/music\/([a-z]+-(?:de|su))$/.exec(url);
-  const name = m && MUSIC[m[1]];
+  const m = /^\/music\/([a-z]+-(?:de|su))\/(\d+)$/.exec(url);
+  const name = m && MUSIC[m[1]] && MUSIC[m[1]][+m[2]];
   if (!name) return null;
   const ext = name.split('.').pop().toLowerCase();
   return MUSIC_TYPES[ext] ? ['public/music/' + name, MUSIC_TYPES[ext]] : null;
 }
-// which slots have a file present, e.g. { 'victory-de': 'music/victory-de', ... } (the client asks once)
+// which files are present per slot, e.g. { 'intro-de': ['music/intro-de/0', 'music/intro-de/1'], ... } (the client asks once)
 function musicList() {
   const out = {};
-  for (const key in MUSIC) if (musicFile('/music/' + key) && fs.existsSync(path.join(ROOT, 'public/music', MUSIC[key]))) out[key] = 'music/' + key;
+  for (const key in MUSIC) {
+    const urls = MUSIC[key].map((name, i) => `/music/${key}/${i}`)
+      .filter((u, i) => musicFile(u) && fs.existsSync(path.join(ROOT, 'public/music', MUSIC[key][i])))
+      .map(u => u.slice(1));
+    if (urls.length) out[key] = urls;
+  }
   return out;
 }
 

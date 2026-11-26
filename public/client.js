@@ -60,6 +60,12 @@ const TEAMS = {
         bullet: '#ece8d4', mini: '#a7b8c4', tint: 'rgba(60,74,86,0.20)', label: 'GERMANY' },
   su: { id: 'su', name: 'Soviet Union', body: '#5f7738', dark: '#374520', barrel: '#4c5f2c', top: '#6a8340',
         bullet: '#f2c95c', mini: '#9cc05a', tint: 'rgba(150,40,30,0.13)', label: 'SOVIET UNION' },
+  it: { id: 'it', name: 'Italy', body: '#b39f6e', dark: '#6d5f3c', barrel: '#8f8058', top: '#bfae7c',
+        bullet: '#ece2c4', mini: '#d8c48a', tint: 'rgba(150,120,60,0.15)', label: 'ITALY' },
+  us: { id: 'us', name: 'United States', body: '#59613a', dark: '#353a22', barrel: '#4b5231', top: '#646d42',
+        bullet: '#ece8d4', mini: '#a3b06e', tint: 'rgba(70,80,40,0.15)', label: 'UNITED STATES' },
+  gb: { id: 'gb', name: 'United Kingdom', body: '#5e6446', dark: '#373b28', barrel: '#4d523a', top: '#696f4f',
+        bullet: '#ece8d4', mini: '#b8bc8e', tint: 'rgba(80,80,60,0.15)', label: 'UNITED KINGDOM' },
   x: { id: 'x', bullet: '#e3e1d9', dark: '#555555' },
   wreck: { id: 'wreck', body: '#3d3832', dark: '#211e1a', barrel: '#2f2b27', top: '#46403a' },
 };
@@ -67,35 +73,45 @@ const TEAMS = {
 // =====================================================================
 // Music: public/music/victory-{de,su}.mp3 and intro-{de,su}.mp3 (or .ogg/.wav/.m4a), if present
 // =====================================================================
-// intro songs are switched off for now (files and code stay in); flip to bring them back
-const INTRO_ENABLED = false;
+// intro songs (set false to switch them off; the files and code stay in)
+const INTRO_ENABLED = true;
+// Songs fade in when they start and fade out before they end. A new song crossfades with the old one.
 const Music = (() => {
-  let files = {}, cur = null, fadeT = null, muted = false;
+  const VOL = { victory: 0.7, intro: 0.35 }, FADE_IN = 2, FADE_END = 3;   // intro sits under the battle sounds
+  let files = {}, cur = null, muted = false;
   fetch('music.json').then(r => r.json()).then(j => { files = j || {}; }).catch(() => {});
-  const stop = () => { if (cur) { cur.pause(); cur = null; } clearInterval(fadeT); };
+  // ramp one track's volume to `to` over `secs`, then optionally stop it
+  function fade(a, to, secs, stopAfter) {
+    clearInterval(a._fadeT);
+    const v0 = a.volume, t0 = performance.now();
+    a._fadeT = setInterval(() => {
+      const k = Math.min(1, (performance.now() - t0) / (Math.max(0.05, secs) * 1000));
+      a.volume = clamp(v0 + (to - v0) * k, 0, 1);
+      if (k >= 1) { clearInterval(a._fadeT); if (stopAfter) { a.pause(); if (cur === a) cur = null; } }
+    }, 40);
+  }
   return {
-    // kind = 'victory' | 'intro'
+    // kind = 'victory' | 'intro'; picks one of that side's songs at random
     play(kind, side) {
       if (kind === 'intro' && !INTRO_ENABLED) return false;
-      const src = files[`${kind}-${side}`];
-      if (!src) return false;
-      stop();
-      cur = new Audio(src);
-      cur.volume = 0.7; cur.muted = muted;
-      cur.play().catch(() => {});
+      const list = [].concat(files[`${kind}-${side}`] || []);
+      if (!list.length) return false;
+      if (cur) fade(cur, 0, 1.2, true);                   // crossfade out whatever was playing
+      const a = new Audio(list[Math.floor(Math.random() * list.length)]);
+      a.volume = 0; a.muted = muted;
+      a.addEventListener('timeupdate', () => {            // ease out before the track ends
+        if (!a._ending && a.duration && a.duration - a.currentTime <= FADE_END) {
+          a._ending = true; fade(a, 0, a.duration - a.currentTime, true);
+        }
+      });
+      a.play().then(() => fade(a, VOL[kind] || 0.6, FADE_IN)).catch(() => {});
+      cur = a;
       return true;
     },
-    // let the song ring out, then fade it over a few seconds once the next battle starts
-    fadeOut(secs = 4) {
-      if (!cur) return;
-      const a = cur, v0 = a.volume, t0 = performance.now();
-      clearInterval(fadeT);
-      fadeT = setInterval(() => {
-        const k = 1 - (performance.now() - t0) / (secs * 1000);
-        if (k <= 0) { a.pause(); if (cur === a) cur = null; clearInterval(fadeT); } else a.volume = v0 * k;
-      }, 50);
-    },
+    // fade the current song out over a few seconds (e.g. once the next battle starts)
+    fadeOut(secs = 4) { if (cur) fade(cur, 0, secs, true); },
     setMuted(m) { muted = m; if (cur) cur.muted = m; },
+    get playing() { return cur ? cur.src : null; },
   };
 })();
 
@@ -141,16 +157,30 @@ function setSight(on) {
 }
 
 addEventListener('keydown', e => {
-  if (state !== 'play' || showBoard || e.target.tagName === 'INPUT') return;
+  if (state !== 'play' || e.target.tagName === 'INPUT') return;
   const k = e.key.toLowerCase();
-  keys.add(k);
+  keys.add(k);                                   // driving keeps working with the leaderboard up
+  if (k.startsWith('arrow') || k === ' ') e.preventDefault();
+  if (showBoard) return;                         // ...but nothing else does
   if (k === 'f' && !e.repeat) { autofire = !autofire; bigMessage(autofire ? 'Autofire ON' : 'Autofire OFF', 1.2); }
   if (k === 'm' && !e.repeat) { Sound.toggle(); bigMessage(Sound.muted ? 'Sound OFF' : 'Sound ON', 1.2); }
   if (SIGHT_ENABLED && k === 'shift' && !e.repeat) setSight(!view2.sight);
   if (k === 't' && !e.repeat) switchSides();
-  if (k.startsWith('arrow') || k === ' ') e.preventDefault();
+  // minimap size: + / - (main keyboard or numpad)
+  if (k === '+' || k === '=') setMinimapScale(minimapScale * 1.15);
+  if (k === '-' || k === '_') setMinimapScale(minimapScale / 1.15);
 });
-addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
+addEventListener('keyup', e => {
+  keys.delete(e.key.toLowerCase());
+  if (e.key.toLowerCase() === 'q' && markWheel) {
+    if (markWheel.sel != null) send({ t: 'mark', x: Math.round(markWheel.wx), y: Math.round(markWheel.wy), c: markWheel.sel });
+    markWheel = null;
+  }
+});
+addEventListener('keydown', e => {
+  if (e.key.toLowerCase() !== 'q' || e.repeat || state !== 'play' || showBoard || e.target.tagName === 'INPUT' || !myTank()) return;
+  markWheel = { sx: mouse.x, sy: mouse.y, wx: cam.x + (mouse.x - W / 2) / cam.scale, wy: cam.y + (mouse.y - H / 2) / cam.scale, sel: null };
+});
 addEventListener('blur', () => { keys.clear(); mouse.down = mouse.rdown = false; });
 canvas.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
 canvas.addEventListener('mousedown', e => {
@@ -466,12 +496,16 @@ function onMessage(m) {
   else offset += (sample - offset) * (sample > offset ? 0.2 : 0.02);
 
   you = m.you || null;
+  // promotion: rank went up on the same side (it drops back when a new battle resets scores — no popup then)
+  if (you && promo.lastRank != null && you.team === promo.lastTeam && you.rank > promo.lastRank) promoted(you.team, you.rank);
+  promo.lastRank = you ? you.rank : null; promo.lastTeam = you ? you.team : null;
   // the server has the final say on which side we are on (it refuses switches mid-battle)
   if (you && you.team && you.team !== playerTeam && state !== 'menu') {
     playerTeam = you.team;
     if (state === 'dead') onTeamChanged();
   }
   if (m.lb) board = m.lb;
+  if (m.on !== undefined) online = m.on;
   sp = m.sp === undefined ? null : m.sp;
   if (m.cp) cps = m.cp;
   if (m.ln) lineDead = m.ln;
@@ -490,7 +524,268 @@ const ostate = new Map();    // per-obstacle hit flash
 const particles = [], texts = [], wrecks = [], feed = [];
 const cam = { x: CENTER, y: CENTER, scale: 1, shake: 0 };
 let msg = { text: '', t: 0, dur: 0 };
-function bigMessage(text, dur = 2.5) { msg = { text, t: now, dur }; }
+// team: optional side whose emblem is drawn in front of the text
+function bigMessage(text, dur = 2.5, team = null) { msg = { text, t: now, dur, team }; }
+// ---- spotting: hold Q, flick toward a vehicle type, release to mark that spot for your side ----
+const SPOT_LEN = 8;
+let spots = [], markWheel = null;
+function addSpot(e) {
+  spots.push({ x: e.x, y: e.y, c: e.c, by: e.by, t: now });
+  if (spots.length > 12) spots.shift();
+  Sound.tone([988, 740], 0.06, 0.05);
+}
+function drawMarkWheel() {
+  const mw = markWheel;
+  if (!mw) return;
+  if (state !== 'play' || !myTank()) { markWheel = null; return; }
+  const R = 78, r0 = 24, n = CATS.length, dx = mouse.x - mw.sx, dy = mouse.y - mw.sy;
+  // sector under the mouse (first one straight up, going clockwise); dead zone in the middle cancels
+  mw.sel = Math.hypot(dx, dy) < r0 ? null : Math.floor(((Math.atan2(dy, dx) + Math.PI / 2 + Math.PI / n + TAU * 2) % TAU) / (TAU / n));
+  ctx.save();
+  for (let i = 0; i < n; i++) {
+    const a0 = -Math.PI / 2 - Math.PI / n + i * TAU / n, a1 = a0 + TAU / n, on = mw.sel === i;
+    ctx.beginPath(); ctx.arc(mw.sx, mw.sy, on ? R + 6 : R, a0 + 0.03, a1 - 0.03); ctx.arc(mw.sx, mw.sy, r0, a1 - 0.03, a0 + 0.03, true); ctx.closePath();
+    ctx.fillStyle = on ? 'rgba(150,40,30,0.88)' : 'rgba(20,19,14,0.78)'; ctx.fill();
+    ctx.strokeStyle = on ? '#ff8a6a' : 'rgba(231,220,177,0.3)'; ctx.lineWidth = 1.5; ctx.stroke();
+    const am = (a0 + a1) / 2, lr = (R + r0) / 2 + (on ? 3 : 0);
+    hudText(CATS[i].short, mw.sx + Math.cos(am) * lr, mw.sy + Math.sin(am) * lr - 4, on ? 17 : 15, on ? '#fff' : '#e8e0c0');
+    hudText(CATS[i].name.replace(' tank destroyers', ' TD').replace(' tanks', '').replace('Tank destroyers', 'TD'), mw.sx + Math.cos(am) * lr, mw.sy + Math.sin(am) * lr + 11, 9, on ? '#ffd9cf' : '#a99f78', 'center', 400);
+  }
+  ctx.fillStyle = 'rgba(20,19,14,0.85)'; ctx.beginPath(); ctx.arc(mw.sx, mw.sy, r0 - 3, 0, TAU); ctx.fill();
+  hudText(mw.sel == null ? 'MARK' : 'ENEMY', mw.sx, mw.sy, 10, '#ff8a6a', 'center', 600);
+  ctx.restore();
+}
+function drawSpots() {
+  spots = spots.filter(mk => now - mk.t < SPOT_LEN);
+  for (const mk of spots) {
+    const age = now - mk.t, a = clamp(age / 0.2, 0, 1) * clamp((SPOT_LEN - age) / 1.5, 0, 1);
+    let sx = W / 2 + (mk.x - cam.x) * cam.scale, sy = H / 2 + (mk.y - cam.y) * cam.scale;
+    const off = sx < 30 || sx > W - 30 || sy < 30 || sy > H - 30;
+    sx = clamp(sx, 30, W - 30); sy = clamp(sy, 30, H - 30);     // off-screen: pinned to the edge
+    ctx.save(); ctx.globalAlpha = a;
+    if (!off) {   // expanding ping rings on the spot
+      const ring = (age * 1.2) % 1;
+      ctx.strokeStyle = `rgba(235,60,45,${0.7 * (1 - ring)})`; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(sx, sy, 10 + ring * 40, 0, TAU); ctx.stroke();
+    }
+    // red diamond with the vehicle type
+    const s = 13;
+    ctx.fillStyle = 'rgba(190,40,30,0.92)'; ctx.strokeStyle = '#ffd9cf'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(sx, sy - s); ctx.lineTo(sx + s, sy); ctx.lineTo(sx, sy + s); ctx.lineTo(sx - s, sy); ctx.closePath(); ctx.fill(); ctx.stroke();
+    hudText(CATS[mk.c].short, sx, sy + 0.5, CATS[mk.c].short.length > 2 ? 9 : 11, '#fff', 'center', 600);
+    if (off) {    // arrow pointing toward it
+      const ang = Math.atan2(mk.y - cam.y, mk.x - cam.x);
+      ctx.fillStyle = '#ff8a6a'; ctx.beginPath();
+      ctx.moveTo(sx + Math.cos(ang) * (s + 9), sy + Math.sin(ang) * (s + 9));
+      ctx.lineTo(sx + Math.cos(ang + 2.6) * (s + 2), sy + Math.sin(ang + 2.6) * (s + 2));
+      ctx.lineTo(sx + Math.cos(ang - 2.6) * (s + 2), sy + Math.sin(ang - 2.6) * (s + 2)); ctx.closePath(); ctx.fill();
+    }
+    hudText(mk.by, sx, sy + s + 10, 10, '#ffd9cf', 'center', 400);
+    ctx.restore();
+  }
+}
+// ---- combat awards: a short stacked list above the crosshair area ("Armor Destroyed +100") ----
+const AWARD_LEN = 2.6;
+let awards = [];
+function addAward(label, n) {
+  const last = awards[0];
+  // a stream of small damage awards merges into one line instead of stacking up
+  if (last && last.label === label && label === 'Armor Damaged' && now - last.t < 1.2) { last.n += n; last.t = now; last.bump = now; return; }
+  awards.unshift({ label, n, t: now, bump: now });
+  if (awards.length > 4) awards.length = 4;
+  if (label === 'Armor Destroyed' || label === 'Point Captured') Sound.tone([660, 880], 0.07, 0.05);
+}
+function drawAwards() {
+  awards = awards.filter(a => now - a.t < AWARD_LEN);
+  awards.forEach((a, i) => {
+    const age = now - a.t, big = a.label === 'Armor Destroyed' || a.label === 'Point Captured';
+    const alpha = clamp(age / 0.15, 0, 1) * clamp((AWARD_LEN - age) / 0.5, 0, 1) * (1 - i * 0.18);
+    const pop = 1 + 0.12 * Math.max(0, 1 - (now - a.bump) / 0.15);
+    const y = H * 0.3 + i * 24, size = (big ? 18 : 14) * pop;
+    ctx.globalAlpha = alpha;
+    ctx.font = `600 ${size}px Oswald, Impact, sans-serif`;
+    const label = a.label.toUpperCase(), pts = `+${a.n}`;
+    const lw = ctx.measureText(label + '  ').width, pw = ctx.measureText(pts).width, x0 = W / 2 - (lw + pw) / 2;
+    hudText(label, x0, y, size, big ? '#f2ead0' : '#d6cca3', 'left', 600);
+    hudText(pts, x0 + lw, y, size, a.label.startsWith('Armor Destroyed') ? '#ff5a3c' : '#f6e27a', 'left', 600);
+  });
+  ctx.globalAlpha = 1;
+}
+// ---- battle intro: "Die Schlacht beginnt!" / "Бой начинается!" with the side's emblem ----
+const INTRO_LEN = 4.6;
+const INTRO_TEXT = {
+  de: { head: 'Die Schlacht beginnt!', sub: 'DEUTSCHES REICH' },
+  su: { head: 'Бой начинается!', sub: 'СОВЕТСКИЙ СОЮЗ' },
+};
+let intro = null;
+// ---- promotion popup: a small card that drops in under the battle status, then slides away ----
+const PROMO_LEN = 3.8;
+const promo = { lastRank: null, lastTeam: null, show: null };
+function promoted(team, rank) {
+  promo.show = { team, rank, t: now };
+  Sound.tone([523, 659, 784], 0.09, 0.05);       // quiet rising chime
+}
+function drawPromo() {
+  const p = promo.show;
+  if (!p) return;
+  const a = now - p.t;
+  if (a > PROMO_LEN) { promo.show = null; return; }
+  const ease = x => 1 - Math.pow(1 - clamp(x, 0, 1), 3);
+  const inn = ease(a / 0.35), out = clamp((PROMO_LEN - a) / 0.5, 0, 1);
+  const w = 290, h = 58, x = W / 2 - w / 2, y = 92 - 16 * (1 - inn) - 10 * (1 - out);
+  const r = RANKS[p.team][p.rank];
+  if (!r) return;
+  ctx.save();
+  ctx.globalAlpha = inn * out;
+  ctx.fillStyle = 'rgba(20,19,14,0.88)'; rrect(ctx, x, y, w, h, 4); ctx.fill();
+  ctx.strokeStyle = 'rgba(231,220,177,0.35)'; ctx.lineWidth = 1; rrect(ctx, x + 0.5, y + 0.5, w - 1, h - 1, 4); ctx.stroke();
+  ctx.fillStyle = TEAMS[p.team].mini; ctx.fillRect(x, y + 4, 3, h - 8);
+  // a light glint sweeps across the card once it has landed
+  const sw = clamp((a - 0.3) / 0.6, 0, 1);
+  if (sw > 0 && sw < 1) {
+    ctx.save(); rrect(ctx, x, y, w, h, 4); ctx.clip();
+    const gx = x - 60 + (w + 120) * sw, g = ctx.createLinearGradient(gx - 40, 0, gx + 40, 0);
+    g.addColorStop(0, 'rgba(255,245,210,0)'); g.addColorStop(0.5, 'rgba(255,245,210,0.18)'); g.addColorStop(1, 'rgba(255,245,210,0)');
+    ctx.fillStyle = g; ctx.fillRect(x, y, w, h); ctx.restore();
+  }
+  // insignia pops slightly as it lands
+  const pop = 1 + 0.25 * Math.max(0, 1 - Math.abs(a - 0.3) / 0.2);
+  drawInsignia(ctx, p.team, p.rank, x + 32, y + h / 2, 34 * pop);
+  hudText(p.team === 'de' ? 'BEFÖRDERT' : 'ПОВЫШЕНИЕ', x + 62, y + 18, 11, '#d9b46b', 'left', 600);
+  hudText(r[1], x + 62, y + 38, 19, '#f2ead0', 'left', 600);
+  ctx.restore();
+}
+// ---- end of battle: SIEG / NIEDERLAGE, ПОБЕДА / ПОРАЖЕНИЕ ----
+const END_WORDS = {
+  de: { win: 'SIEG', lose: 'NIEDERLAGE' },
+  su: { win: 'ПОБЕДА', lose: 'ПОРАЖЕНИЕ' },
+};
+let endScreen = null;   // { w: winning side, t: when it started }
+function drawEndScreen(myTeam) {
+  const [w, secs] = phase, wt = OWNER[w];
+  if (!wt) return;
+  // joined during the break: show it already settled, no entrance animation
+  if (!endScreen || endScreen.w !== wt) endScreen = { w: wt, t: now - 5 };
+  const a = now - endScreen.t, ease = x => 1 - Math.pow(1 - clamp(x, 0, 1), 3);
+  const won = myTeam ? wt === myTeam : true, side = myTeam || wt;
+  const accent = won ? '#f6e27a' : '#e0573f';
+  const cx = W / 2, cy = H * 0.42;
+  ctx.save();
+  // dim with a tinted vignette, letterbox bars
+  const dim = ease(a / 0.6);
+  ctx.fillStyle = `rgba(0,0,0,${0.5 * dim})`; ctx.fillRect(0, 0, W, H);
+  const vg = ctx.createRadialGradient(cx, cy, Math.min(W, H) * 0.15, cx, cy, Math.max(W, H) * 0.75);
+  vg.addColorStop(0, won ? 'rgba(246,226,122,0.10)' : 'rgba(224,87,63,0.10)'); vg.addColorStop(1, 'rgba(0,0,0,0.55)');
+  ctx.globalAlpha = dim; ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1;
+  const bar = H * 0.1 * ease(a / 0.5);
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, bar); ctx.fillRect(0, H - bar, W, bar);
+  // the winner's emblem drops in with a glow
+  const ea = ease((a - 0.2) / 0.7), es = Math.min(W, H) * 0.06 * (1.5 - 0.5 * ea), ey = cy - Math.min(W, H) * 0.16;
+  ctx.globalAlpha = ea;
+  const g = ctx.createRadialGradient(cx, ey, 0, cx, ey, es * 3);
+  g.addColorStop(0, won ? 'rgba(255,236,170,0.4)' : 'rgba(255,120,90,0.3)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, ey, es * 3, 0, TAU); ctx.fill();
+  ctx.save(); ctx.translate(cx, ey); drawFactionMark(ctx, wt, es); ctx.restore();
+  // title in your side's language, settling in from wide letter spacing
+  const ta = ease((a - 0.45) / 0.6), fs = Math.min(W * 0.11, 120);
+  const word = END_WORDS[side][won ? 'win' : 'lose'];
+  ctx.globalAlpha = ta;
+  ctx.font = `600 ${fs}px Oswald, Impact, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  if ('letterSpacing' in ctx) ctx.letterSpacing = `${(1 - ta) * 30 + 6}px`;
+  ctx.lineJoin = 'round'; ctx.lineWidth = fs * 0.1; ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+  ctx.strokeText(word, cx, cy + fs * 0.25);
+  ctx.fillStyle = accent; ctx.fillText(word, cx, cy + fs * 0.25);
+  if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+  // English, then a rule that wipes out from the centre
+  const english = !myTeam ? `${TEAMS[wt].name.toUpperCase()} VICTORIOUS` : won ? 'VICTORY' : 'DEFEAT';
+  ctx.globalAlpha = ease((a - 0.8) / 0.5);
+  hudText(english, cx, cy + fs * 0.85, Math.max(14, fs * 0.17), '#e8e0c0', 'center', 400);
+  const lw = Math.min(W * 0.55, 620) * ease((a - 0.9) / 0.6);
+  ctx.globalAlpha = 1; ctx.fillStyle = accent; ctx.fillRect(cx - lw / 2, cy + fs * 1.08, lw, 2);
+  // how it was won, and your battle
+  const by = cy + fs * 1.08 + 28;
+  ctx.globalAlpha = ease((a - 1.2) / 0.5);
+  hudText(wt === ATTACKER ? `${TEAMS[wt].name} breaks through to ${CAP_POINTS[O_IDX].name}` : `${TEAMS[wt].name} holds the line`,
+    cx, by, 17, '#d9cf9f', 'center', 400);
+  if (you) {
+    ctx.globalAlpha = ease((a - 1.5) / 0.5);
+    const stats = [['SCORE', fmt(you.score || 0)], ['KILLS', String(you.kills || 0)], ['DEATHS', String(you.deaths || 0)]];
+    stats.forEach(([k, v], i) => {
+      const sx = cx + (i - 1) * 120;
+      hudText(v, sx, by + 44, 26, '#f2ead0');
+      hudText(k, sx, by + 68, 11, '#8d8668', 'center', 400);
+    });
+  }
+  // countdown to the next battle: a draining bar above the bottom letterbox
+  ctx.globalAlpha = ease((a - 0.6) / 0.5);
+  const total = Z.ROUND_END || 30, f = clamp(secs / total, 0, 1), cw = Math.min(W * 0.4, 420), cy2 = H - bar - 30;
+  ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(cx - cw / 2, cy2, cw, 3);
+  ctx.fillStyle = accent; ctx.fillRect(cx - cw / 2, cy2, cw * f, 3);
+  hudText(`Next battle in ${secs}s  ·  T — switch sides`, cx, cy2 - 14, 13, '#b9b195', 'center', 400);
+  ctx.restore();
+}
+// coalition shields pre-rendered once (drawCoalitionBadge clears the canvas it's given)
+const coalBadgeCache = {};
+function coalitionBadgeImage(coal) {
+  if (!coalBadgeCache[coal]) {
+    const cv = document.createElement('canvas'); cv.width = 128; cv.height = 144;
+    drawCoalitionBadge(cv.getContext('2d'), coal, cv.width, cv.height);
+    coalBadgeCache[coal] = cv;
+  }
+  return coalBadgeCache[coal];
+}
+function battleIntro(team) {
+  if (!TEAMS[team] || !INTRO_TEXT[team]) return;
+  intro = { team, t: now };
+  msg = { text: '', t: 0, dur: 0 };   // clear any pending banner so it doesn't sit under the intro
+  Sound.play('boom', 0.55, 0.45, 1.5);          // distant artillery rolling across the steppe
+}
+function drawIntro() {
+  if (!intro) return;
+  const a = now - intro.t;
+  if (a > INTRO_LEN) { intro = null; return; }
+  const ease = x => 1 - Math.pow(1 - clamp(x, 0, 1), 3);
+  const out = clamp((INTRO_LEN - a) / 0.8, 0, 1);              // everything fades over the last 0.8 s
+  const T = INTRO_TEXT[intro.team], col = TEAMS[intro.team].mini;
+  const cx = W / 2, cy = H * 0.44;
+  ctx.save();
+  // dim the field and slide in letterbox bars
+  ctx.fillStyle = `rgba(0,0,0,${0.45 * ease(a / 0.4) * out})`; ctx.fillRect(0, 0, W, H);
+  const bar = H * 0.11 * ease(a / 0.45) * out;
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, bar); ctx.fillRect(0, H - bar, W, bar);
+  // emblem: scales down into place with a soft glow behind it
+  const ea = ease((a - 0.15) / 0.6), es = Math.min(W, H) * 0.075 * (1.6 - 0.6 * ea);
+  ctx.globalAlpha = ea * out;
+  const g = ctx.createRadialGradient(cx, cy - es * 1.9, 0, cx, cy - es * 1.9, es * 2.6);
+  g.addColorStop(0, 'rgba(255,240,200,0.35)'); g.addColorStop(1, 'rgba(255,240,200,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy - es * 1.9, es * 2.6, 0, TAU); ctx.fill();
+  ctx.save(); ctx.translate(cx, cy - es * 1.9); drawFactionMark(ctx, intro.team, es); ctx.restore();
+  // headline: settles in from wide letter spacing
+  const ha = ease((a - 0.45) / 0.55), fs = Math.min(W * 0.072, 92);
+  ctx.globalAlpha = ha * out;
+  ctx.font = `600 ${fs}px Oswald, Impact, sans-serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  if ('letterSpacing' in ctx) ctx.letterSpacing = `${(1 - ha) * 18 + 2}px`;
+  ctx.lineJoin = 'round'; ctx.lineWidth = fs * 0.12; ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+  ctx.strokeText(T.head, cx, cy + fs * 0.35);
+  ctx.fillStyle = '#f2ead0'; ctx.fillText(T.head, cx, cy + fs * 0.35);
+  if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+  // a rule wipes out from the centre, then the faction name and coalition
+  const wa = ease((a - 0.9) / 0.5), lw = Math.min(W * 0.5, 560) * wa;
+  ctx.globalAlpha = out;
+  ctx.fillStyle = col; ctx.fillRect(cx - lw / 2, cy + fs * 0.95, lw, 3);
+  ctx.globalAlpha = ease((a - 1.1) / 0.5) * out;
+  // "DEUTSCHES REICH · GERMANY · [shield] AXIS"
+  const coal = Z.FACTIONS[intro.team].coalition, ts = Math.max(13, fs * 0.2), ty = cy + fs * 0.95 + 26;
+  const lead = `${T.sub}  ·  ${TEAMS[intro.team].name.toUpperCase()}  ·  `, word = coal.toUpperCase();
+  ctx.font = `400 ${ts}px Oswald, Impact, sans-serif`;
+  const bh = ts * 1.5, bw = bh * 64 / 72, gap = ts * 0.4;
+  const ldw = ctx.measureText(lead).width, ww = ctx.measureText(word).width, x0 = cx - (ldw + bw + gap + ww) / 2;
+  hudText(lead, x0, ty, ts, '#d9cf9f', 'left', 400);
+  ctx.drawImage(coalitionBadgeImage(coal), x0 + ldw, ty - bh / 2, bw, bh);
+  hudText(word, x0 + ldw + bw + gap, ty, ts, '#d9cf9f', 'left', 400);
+  ctx.restore();
+}
 let deathInfo = null;
 
 function lerpEnt(a, b, f, angles) {
@@ -620,9 +915,9 @@ function handleEvent(e) {
     }
     case 'cp': {
       const p = CAP_POINTS[e.i], ours = you && e.t === you.team;
-      const label = `${p.id} · ${p.name}`;
+      const label = `${p.id} (${p.name})`;
       if (you) {
-        bigMessage(ours ? `${e.n ? 'Neutralized' : 'Captured'} ${label}` : `Enemy ${e.n ? 'neutralized' : 'captured'} ${label}`, 3);
+        bigMessage(`${TEAMS[e.t].name} ${e.n ? 'neutralizes' : 'captures'} ${label}`, 3, e.t);
         Sound.tone(ours ? [392, 523, 659] : [440, 349, 262], 0.14, 0.07);
       }
       feed.push({ kn: TEAMS[e.t].name, kt: e.t, vn: label, vt: e.n ? null : e.t, sym: e.n ? '⊘' : '⚑', t: now });
@@ -630,11 +925,12 @@ function handleEvent(e) {
       break;
     }
     case 're':
+      endScreen = { w: e.w, t: now };
       // the winning side's victory song if one has been supplied, otherwise a short fanfare
       if (!Music.play('victory', e.w) && you) Sound.tone(e.w === you.team ? [392, 523, 659, 784] : [392, 330, 262, 196], 0.22, 0.09);
       break;
     case 'rn':
-      bigMessage('A new battle begins', 3);
+      battleIntro(you ? you.team : playerTeam);
       if (!(you && Music.play('intro', you.team))) Music.fadeOut();
       break;
     case 'ld':
@@ -667,6 +963,9 @@ function handleEvent(e) {
     // personal events
     case 't': texts.push({ x: e.x, y: e.y, text: e.text, color: e.c, size: e.s, t: now }); break;
     case 'm': bigMessage(e.text, e.d); break;
+    case 'aw': addAward(e.l, e.n); break;
+    case 'mk': addSpot(e); break;
+    case 'intro': battleIntro(e.t); break;
     case 'sh': cam.shake = Math.min(14, cam.shake + e.a); break;
     case 'die': onPlayerDeath(e); break;
   }
@@ -828,6 +1127,22 @@ function drawFactionMark(c, team, s) {   // hull marking: Balkenkreuz or red sta
     c.closePath();
     c.fillStyle = '#c8322a'; c.fill();
     const lw = c.lineWidth; c.lineWidth = Math.max(1, s * 0.14); c.strokeStyle = '#f2f2ea'; c.stroke(); c.lineWidth = lw;
+  } else if (team === 'it') {       // red shield with a white cross (arms of Savoy)
+    c.beginPath(); c.moveTo(-s * 0.8, -s); c.lineTo(s * 0.8, -s); c.lineTo(s * 0.8, s * 0.2);
+    c.quadraticCurveTo(s * 0.8, s * 0.8, 0, s); c.quadraticCurveTo(-s * 0.8, s * 0.8, -s * 0.8, s * 0.2); c.closePath();
+    c.fillStyle = '#b82a2a'; c.fill();
+    c.lineWidth = Math.max(1, s * 0.1); c.strokeStyle = '#2a6b3c'; c.stroke();
+    c.fillStyle = '#f2f2ea'; c.fillRect(-s * 0.16, -s * 0.8, s * 0.32, s * 1.5); c.fillRect(-s * 0.62, -s * 0.28, s * 1.24, s * 0.32);
+  } else if (team === 'us') {       // white star in a white ring
+    c.beginPath(); c.arc(0, 0, s, 0, TAU); c.lineWidth = Math.max(1, s * 0.14); c.strokeStyle = '#f2f2ea'; c.stroke();
+    c.beginPath();
+    for (let i = 0; i < 10; i++) { const rr = i % 2 ? s * 0.33 : s * 0.82, a = -Math.PI / 2 + i * Math.PI / 5; c.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+    c.closePath(); c.fillStyle = '#f2f2ea'; c.fill();
+  } else if (team === 'gb') {       // white-red-white recognition flash
+    const w = s * 0.62, h = s * 1.5;
+    c.fillStyle = '#f2f2ea'; c.fillRect(-w * 1.5, -h / 2, w, h); c.fillRect(w * 0.5, -h / 2, w, h);
+    c.fillStyle = '#b82a2a'; c.fillRect(-w * 0.5, -h / 2, w, h);
+    c.lineWidth = 1; c.strokeStyle = 'rgba(0,0,0,0.4)'; c.strokeRect(-w * 1.5, -h / 2, w * 3, h);
   }
 }
 
@@ -1489,7 +1804,11 @@ function render() {
   if (mapA > 0) drawDeployMap(mapA);
   if (state === 'dead' && dmap.open && dmap.stage === 'pick') drawDeployButton();
   if (view2.sight && state === 'play') drawSightOverlay();
-  drawHUD();
+  // between battles the end screen replaces the whole HUD (minimap, feed, crosshair...), like the intro does
+  if (phase) drawEndScreen(you ? you.team : null);
+  else { endScreen = null; drawHUD(); }
+  drawPromo();
+  drawIntro();
   drawBoard();
 }
 function renderWorld() {
@@ -1559,6 +1878,41 @@ function drawInsignia(c, team, rank, x, y, s) {
       c.stroke();
       if (rank >= 5) pip(x, y + s * 0.05, s * 0.075, '#e8c34a');
       if (rank >= 6) pip(x, y + s * 0.3, s * 0.075, '#e8c34a');
+    }
+  } else if (team === 'it' || team === 'us' || team === 'gb') {
+    // chevrons (up for the US, down for the British and Italians) for NCOs; bars, pips or stars for officers
+    const chev = (n, up, col, y1) => {
+      for (const [lw, cc] of [[s * 0.24, 'rgba(0,0,0,0.75)'], [s * 0.12, col]]) {
+        c.strokeStyle = cc; c.lineWidth = lw;
+        for (let k = 0; k < n; k++) {
+          const yy = y1 + k * s * 0.24, d = up ? -1 : 1;
+          c.beginPath(); c.moveTo(x - s * 0.34, yy - d * s * 0.14); c.lineTo(x, yy + d * s * 0.14); c.lineTo(x + s * 0.34, yy - d * s * 0.14); c.stroke();
+        }
+      }
+    };
+    if (rank <= 3) {
+      if (team === 'us') {
+        chev(rank === 0 ? 1 : rank === 1 ? 2 : 3, true, '#c9c08a', y - s * 0.3);
+        if (rank === 3) { c.strokeStyle = '#c9c08a'; c.lineWidth = s * 0.12; c.beginPath(); c.arc(x, y + s * 0.05, s * 0.36, 0.25 * Math.PI, 0.75 * Math.PI); c.stroke(); }
+      } else if (team === 'gb') {
+        chev(rank === 0 ? 1 : rank === 1 ? 2 : 3, false, '#e8e2c8', y - s * 0.18);
+        if (rank === 3) { c.fillStyle = '#d9b24a'; c.beginPath(); c.arc(x, y - s * 0.42, s * 0.12, Math.PI, 0); c.lineTo(x + s * 0.12, y - s * 0.34); c.lineTo(x - s * 0.12, y - s * 0.34); c.closePath(); c.fill(); }
+      } else {   // Italy: red chevrons for corporals, gold for sergeants
+        chev(rank % 2 === 0 ? 1 : 2, false, rank <= 1 ? '#c0392b' : '#d9b24a', y - s * 0.12);
+      }
+    } else {
+      strap(team === 'it' ? '#8a8a6a' : team === 'us' ? '#6b6a4a' : '#7b7650', team === 'it' ? '#5c5c44' : '#3f3e2c');
+      const n = rank - 3;
+      if (team === 'us') {     // gold bar, silver bar, two silver bars
+        const col = rank === 4 ? '#d9b24a' : '#d4d6d2';
+        for (let k = 0; k < (rank === 6 ? 2 : 1); k++) { c.fillStyle = col; c.fillRect(x - w * 0.18, y - s * 0.05 + k * s * 0.24, w * 0.36, s * 0.16); }
+      } else {                 // British pips / Italian stars, one to three
+        for (let k = 0; k < n; k++) {
+          const py = y + s * 0.3 - k * s * 0.24;
+          if (team === 'gb') { c.fillStyle = '#d9b24a'; c.beginPath(); c.moveTo(x, py - s * 0.09); c.lineTo(x + s * 0.09, py); c.lineTo(x, py + s * 0.09); c.lineTo(x - s * 0.09, py); c.closePath(); c.fill(); }
+          else { c.fillStyle = '#d4d6d2'; c.beginPath(); for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? s * 0.04 : s * 0.1; c.lineTo(x + Math.cos(a) * rr, py + Math.sin(a) * rr); } c.closePath(); c.fill(); }
+        }
+      }
     }
   } else {
     strap('#8a8455', '#b5282c');
@@ -1683,36 +2037,33 @@ function drawHUD() {
   if (msg.text && now - msg.t < msg.dur) {
     const age = now - msg.t;
     ctx.globalAlpha = clamp(msg.dur - age, 0, 1) * clamp(age * 6, 0, 1);
-    hudText(msg.text, cx, H * 0.24, 30, '#f3ead0');
+    if (msg.team && TEAMS[msg.team]) {
+      ctx.font = '600 22px Oswald, Impact, sans-serif';
+      const tw = ctx.measureText(msg.text).width, es = 11, gap = 10, x0 = cx - (tw + es * 2 + gap) / 2;
+      ctx.save(); ctx.translate(x0 + es, H * 0.24); drawFactionMark(ctx, msg.team, es); ctx.restore();
+      hudText(msg.text, x0 + es * 2 + gap, H * 0.24, 22, '#f3ead0', 'left');
+    } else hudText(msg.text, cx, H * 0.24, 22, '#f3ead0');
     ctx.globalAlpha = 1;
   }
-
-  // ---- end-of-battle banner ----
-  if (phase) {
-    const [w, secs] = phase, wt = OWNER[w];
-    const title = !myTeam ? `${TEAMS[wt].name.toUpperCase()} VICTORIOUS` : wt === myTeam ? 'VICTORY' : 'DEFEAT';
-    ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, H * 0.36, W, 120);
-    hudText(title, cx, H * 0.36 + 46, 58, !myTeam ? '#f3ead0' : wt === myTeam ? '#f6e27a' : '#e0573f');
-    hudText(`${wt === ATTACKER ? `${TEAMS[wt].name} breaks through to ${CAP_POINTS[CAP_POINTS.length - 1].name}` : `${TEAMS[wt].name} holds the line`} · next battle in ${secs}s · press T to switch sides`,
-      cx, H * 0.36 + 94, 17, '#e8e0c0', 'center', 400);
-  }
+  drawAwards();
+  drawSpots();
+  drawMarkWheel();
 
   if (!(state === 'dead' && dmap.open)) drawMinimap();
-  if (connected) hudText(`${Math.round(ping)} ms`, W - 14, H - Math.min(170, W * 0.22) - 32, 12, '#e8e0c0', 'right', 400);
+  // connection: players online and ping, top left
+  if (connected) {
+    const pm = Math.round(ping), pc = pm < 80 ? '#7fd46a' : pm < 150 ? '#e6c84a' : '#e0573f';
+    ctx.fillStyle = '#7fd46a'; ctx.beginPath(); ctx.arc(18, 18, 3.5, 0, TAU); ctx.fill();
+    hudText(`${online} online`, 28, 18, 12, '#e8e0c0', 'left', 400);
+    ctx.font = '400 12px Oswald, Impact, sans-serif';
+    const ox = 28 + ctx.measureText(`${online} online`).width + 10;
+    hudText(`${pm} ms`, ox, 18, 12, pc, 'left', 400);
+  }
 
   if (you && state === 'play') {
     const cls = clsByIdx(you.c);
-    const bw = Math.min(420, W - 340), bx = cx - bw / 2, by = H - 64;
-    {
-      ctx.font = '600 30px Oswald, Impact, sans-serif';
-      const nw = ctx.measureText(playerName).width;
-      hudText(playerName, cx + 12, by - 34, 30, '#ffffff');
-      drawInsignia(ctx, you.team, you.rank, cx + 12 - nw / 2 - 16, by - 34, 28);
-    }
-    ctx.fillStyle = 'rgba(0,0,0,0.5)'; rrect(ctx, bx, by - 8, bw, 42, 8); ctx.fill();
-    hudText(`${Z.RANKS[you.team][you.rank || 0][1]}  ·  ${cls.name}  ·  ${cls.role}`, cx, by + 5, 16, '#fff');
-    hudText(`Score ${fmt(you.score || 0)}   ·   Kills ${you.kills}   ·   Deaths ${you.deaths || 0}`, cx, by + 23, 12, '#e8e0c0', 'center', 400);
-    if (autofire) hudText('AUTOFIRE', cx + bw / 2 - 8, by - 34, 13, '#f6e27a', 'right');
+    const by = H - 64;   // anchor for the capture-status readout below
+    if (autofire) hudText('AUTOFIRE', cx, H - 22, 13, '#f6e27a');
 
     const me = myTank();
     // ---- capture status while standing in a zone ----
@@ -1743,6 +2094,15 @@ function drawHUD() {
         if (mine >= 0) ctx.fillRect(cx, sy + 14, (sw / 2 - 2) * mine, 6);
         else ctx.fillRect(cx + (sw / 2 - 2) * mine, sy + 14, -(sw / 2 - 2) * mine, 6);
         ctx.fillStyle = '#fff'; ctx.fillRect(cx - 1, sy + 11, 2, 12);
+        // who's in the circle: your side at the right end of the bar (the way your progress grows), the enemy at the left
+        const enemy = you.team === 'de' ? 'su' : 'de', cnt = t => (t === 'de' ? cps[i][4] : cps[i][5]) || 0;
+        [[you.team, cx + sw / 2 + 16, 'left'], [enemy, cx - sw / 2 - 16, 'right']].forEach(([t, ex, al]) => {
+          const n = cnt(t);
+          ctx.globalAlpha = n ? 1 : 0.45;
+          ctx.save(); ctx.translate(ex, sy + 17); drawFactionMark(ctx, t, 8); ctx.restore();
+          hudText(String(n), ex + (al === 'left' ? 14 : -14), sy + 17, 16, n ? '#f3ead0' : '#8d8668', al, 600);
+          ctx.globalAlpha = 1;
+        });
       }
     }
 
@@ -1820,8 +2180,19 @@ function drawHUD() {
   }
 }
 
+// minimap size multiplier, changed with + / - and remembered between visits
+let minimapScale = 1;
+try { minimapScale = clamp(+localStorage.getItem('zitadelle.minimap') || 1, 0.6, 2.2); } catch (e) { /* ignore */ }
+function setMinimapScale(v) {
+  minimapScale = clamp(v, 0.6, 2.2);
+  try { localStorage.setItem('zitadelle.minimap', minimapScale.toFixed(2)); } catch (e) { /* ignore */ }
+}
+const minimapSize = () => Math.min(170 * minimapScale, W * 0.45, H * 0.6);
 function drawMinimap() {
-  const s = Math.min(170, W * 0.22), x = W - s - 12, y = H - s - 12, k = s / WORLD;
+  const s = minimapSize(), x = W - s - 12, y = H - s - 12, k = s / WORLD;
+  ctx.save();
+  const MA = 0.72;   // see the battlefield through it
+  ctx.globalAlpha = MA;
   ctx.fillStyle = 'rgba(40,36,22,0.7)'; ctx.fillRect(x - 3, y - 3, s + 6, s + 6);
   ctx.fillStyle = 'rgba(184,174,121,0.85)'; ctx.fillRect(x, y, s, s);
   ctx.fillStyle = 'rgba(70,58,38,0.6)';
@@ -1833,10 +2204,10 @@ function drawMinimap() {
   drawRoute(ctx, k, x, y, 2);
   CAP_POINTS.forEach((p, i) => {
     const owner = OWNER[(cps[i] || [])[1]];
-    ctx.globalAlpha = cps[i] && cps[i][3] ? 0.95 : 0.45;
+    ctx.globalAlpha = MA * (cps[i] && cps[i][3] ? 0.95 : 0.45);
     ctx.fillStyle = owner ? ptColor(owner) : '#6d6a55';
     ctx.beginPath(); ctx.arc(x + p.x * k, y + p.y * k, Math.max(6, CAP_R * k), 0, TAU); ctx.fill();
-    ctx.globalAlpha = 1;
+    ctx.globalAlpha = MA;
     if (cps[i] && cps[i][2]) {
       ctx.strokeStyle = `rgba(255,90,60,${0.5 + 0.5 * Math.sin(now * 10)})`; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(x + p.x * k, y + p.y * k, Math.max(6, CAP_R * k) + 2, 0, TAU); ctx.stroke();
@@ -1857,8 +2228,15 @@ function drawMinimap() {
       ctx.restore();
     }
   }
+  // spotted enemies
+  for (const mk of spots) {
+    const pulse = 0.5 + 0.5 * Math.sin((now - mk.t) * 8);
+    ctx.fillStyle = `rgba(235,60,45,${0.75 + 0.25 * pulse})`;
+    ctx.beginPath(); ctx.arc(x + mk.x * k, y + mk.y * k, 3.5 + pulse * 1.5, 0, TAU); ctx.fill();
+  }
   ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1;
   ctx.strokeRect(x + view.x0 * k, y + view.y0 * k, (view.x1 - view.x0) * k, (view.y1 - view.y0) * k);
+  ctx.restore();
 }
 
 // =====================================================================
@@ -1876,8 +2254,10 @@ function sendInput(dt) {
   const k = c => (keys.has(c) ? 1 : 0);
   const th = (k('w') || k('arrowup')) - (k('s') || k('arrowdown'));
   const rot = (k('d') || k('arrowright')) - (k('a') || k('arrowleft'));
-  const ax = cam.x + (mouse.x - W / 2) / cam.scale, ay = cam.y + (mouse.y - H / 2) / cam.scale;
-  send({ t: 'in', th, rot, ax: Math.round(ax), ay: Math.round(ay), f: (mouse.down || autofire) && !showBoard ? 1 : 0, m: mouse.rdown && !showBoard ? 1 : 0, cx: Math.round(cam.x), cy: Math.round(cam.y) });
+  // while the spotting wheel is open the gun stays laid where it was when Q went down
+  const ax = markWheel ? markWheel.wx : cam.x + (mouse.x - W / 2) / cam.scale;
+  const ay = markWheel ? markWheel.wy : cam.y + (mouse.y - H / 2) / cam.scale;
+  send({ t: 'in', th, rot, ax: Math.round(ax), ay: Math.round(ay), f: (mouse.down || autofire) && !showBoard && !markWheel ? 1 : 0, m: mouse.rdown && !showBoard ? 1 : 0, cx: Math.round(cam.x), cy: Math.round(cam.y) });
 }
 
 // switch sides: only allowed in the break between battles
@@ -2102,7 +2482,7 @@ function drawDeployMap(a) {
 // =====================================================================
 // Leaderboard (hold Tab)
 // =====================================================================
-let board = null, showBoard = false;
+let board = null, showBoard = false, online = 0;
 function drawBoard() {
   if (!showBoard || !board) return;
   // darken everything behind it
@@ -2151,6 +2531,14 @@ function drawBoard() {
 // =====================================================================
 // Faction info: each side's role, ranks and vehicles
 // =====================================================================
+// each nation's official name in its own language, as of 1943
+const NATIVE_NAME = {
+  de: 'Deutsches Reich',
+  su: 'Союз Советских Социалистических Республик',
+  it: "Regno d'Italia",
+  us: 'United States of America',
+  gb: 'United Kingdom of Great Britain and Northern Ireland',
+};
 const FACTION_INFO = {
   de: { coalition: 'Axis', desc: 'In July 1943 Germany launched Operation Citadel, a pincer attack on the northern and southern '
     + 'faces of the Kursk salient meant to encircle the Soviet armies inside it. The offensive was delayed for months to bring up '
@@ -2158,8 +2546,17 @@ const FACTION_INFO = {
   su: { coalition: 'Allies', desc: 'Warned of the coming attack, the Red Army turned the Kursk salient into one of the most heavily '
     + 'fortified battlefields in history, with deep belts of minefields, anti-tank guns and dug-in tanks. Once the German '
     + 'assault had been worn down, Soviet counter-offensives seized the initiative on the Eastern Front for the rest of the war.' },
+  it: { coalition: 'Axis', desc: 'Germany\'s main European ally. Italian armour had been designed for the deserts of North Africa '
+    + 'and was thinly protected and under-gunned by 1943. On 10 July 1943, days into Operation Citadel, the Allies landed in '
+    + 'Sicily; the threat helped persuade Hitler to call off the Kursk offensive, and Mussolini was overthrown before the month was out.' },
+  us: { coalition: 'Allies', desc: 'American factories built armour on a scale no other nation matched, nearly 50,000 Shermans '
+    + 'alone, and Lend-Lease sent thousands of tanks to Britain and the Soviet Union. In July 1943, while the battle of Kursk was '
+    + 'being fought, US troops landed in Sicily alongside the British.' },
+  gb: { coalition: 'Allies', desc: 'Britain fielded both fast cruiser tanks and slow, heavily armoured infantry tanks, and shipped '
+    + 'thousands of tanks to the Soviet Union on the Arctic convoys; British-built Churchills fought with the Red Army at Kursk. '
+    + 'In July 1943 British and Commonwealth troops landed in Sicily with the Americans.' },
 };
-// coalition badge: a shield. Axis: black with a silver rim and a gold bar; Allies: olive with the white Allied star.
+// coalition badge: a shield. Axis: black with a silver rim and a gold X; Allies: olive with an olive branch.
 function drawCoalitionBadge(c, coalition, w, h) {
   const axis = coalition === 'Axis';
   c.clearRect(0, 0, w, h);
@@ -2172,13 +2569,26 @@ function drawCoalitionBadge(c, coalition, w, h) {
   c.lineWidth = w * 0.06; c.strokeStyle = axis ? '#bfc3c4' : '#d9cf9f'; c.stroke();
   const cx = w / 2, cy = sy + sh * 0.45;
   if (axis) {
-    c.fillStyle = '#c9a23a'; c.fillRect(sx + sw * 0.18, cy - h * 0.05, sw * 0.64, h * 0.1);
+    // a bold gold X
+    const r = w * 0.2;
+    c.lineCap = 'butt'; c.strokeStyle = '#d4ad47'; c.lineWidth = w * 0.1;
+    c.beginPath(); c.moveTo(cx - r, cy - r); c.lineTo(cx + r, cy + r); c.moveTo(cx + r, cy - r); c.lineTo(cx - r, cy + r); c.stroke();
   } else {
-    const r = w * 0.26;
-    c.beginPath(); c.arc(cx, cy, r * 1.12, 0, TAU); c.lineWidth = w * 0.035; c.strokeStyle = '#f2f2ea'; c.stroke();
-    c.beginPath();
-    for (let i = 0; i < 10; i++) { const rr = i % 2 ? r * 0.4 : r, a = -Math.PI / 2 + i * Math.PI / 5; c.lineTo(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr); }
-    c.closePath(); c.fillStyle = '#f2f2ea'; c.fill();
+    // olive branch: a gently curving stem with paired leaves and two olives, in white
+    const u = w * 0.01;
+    const P = t => ({ x: cx - 18 * u + 36 * u * t, y: cy + 26 * u - 52 * u * t - Math.sin(t * Math.PI) * 6 * u });   // point along the stem
+    c.strokeStyle = '#f2f2ea'; c.lineWidth = 2.6 * u; c.lineCap = 'round';
+    c.beginPath(); for (let i = 0; i <= 20; i++) { const q = P(i / 20); if (i) c.lineTo(q.x, q.y); else c.moveTo(q.x, q.y); } c.stroke();
+    const leaf = (t, side, len) => {
+      const q = P(t), q2 = P(Math.min(1, t + 0.02)), ang = Math.atan2(q2.y - q.y, q2.x - q.x) + side * 0.75;
+      c.save(); c.translate(q.x, q.y); c.rotate(ang);
+      c.beginPath(); c.moveTo(0, 0); c.quadraticCurveTo(len * 0.5, -len * 0.28, len, 0); c.quadraticCurveTo(len * 0.5, len * 0.28, 0, 0);
+      c.fillStyle = '#f2f2ea'; c.fill(); c.restore();
+    };
+    for (const [t, side] of [[0.22, 1], [0.32, -1], [0.45, 1], [0.55, -1], [0.68, 1], [0.78, -1]]) leaf(t, side, 15 * u);
+    leaf(0.97, 0, 13 * u);
+    c.fillStyle = '#f2f2ea';
+    for (const [t, side] of [[0.38, -1], [0.62, 1]]) { const q = P(t); c.beginPath(); c.arc(q.x + side * 6 * u, q.y + 4 * u, 2.6 * u, 0, TAU); c.fill(); }
   }
 }
 // real-life background for each vehicle, shown on hover in the faction info screen
@@ -2213,6 +2623,18 @@ const VEHICLE_HISTORY = {
   su122: 'An assault gun on the T-34 chassis with a 122mm M-30 howitzer for infantry support. It fought at Kursk, and production gave way to the SU-85 later in 1943.',
   su152: 'Built in weeks in early 1943 by mounting a 152mm ML-20 gun-howitzer on the KV-1S chassis. Its success against German heavy armour at Kursk earned it the nickname Zveroboy, "beast killer".',
   isu152: 'The 152mm gun-howitzer on the heavier IS chassis, from late 1943. Used as a heavy assault gun, tank destroyer and bunker buster, and kept in service long after the war.',
+  l640: 'Italy\'s last light tank, in service from 1941 with a 20mm Breda autocannon. Too lightly armoured for front-line fighting by 1943; about 280 were built.',
+  m1340: 'The most numerous Italian tank of the war, with a 47mm gun and riveted armour. Effective in the early desert battles, but cramped, slow and outclassed by 1942.',
+  p2640: 'Italy\'s heaviest tank, with a 75mm gun. Only a handful were ready before the armistice of September 1943; most were completed and used by German forces.',
+  sem7518: 'A low assault gun with a short 75mm howitzer on the M13/40-family chassis. Built as a stop-gap, it became one of Italy\'s most effective armoured vehicles in North Africa.',
+  m3stuart: 'American light tank with a 37mm gun, valued for its speed and reliability; British crews nicknamed it the "Honey". Thousands went to Britain and the Soviet Union under Lend-Lease.',
+  m4sherman: 'The main American tank of the war, with nearly 50,000 built. Reliable, easy to maintain and quick to bring its gun to bear, it equipped the US, British, Soviet and many other armies.',
+  m26: 'Heavy tank with a 90mm gun, rushed to Europe in early 1945 to counter the Tiger and Panther. Only a few hundred reached the front before the war ended.',
+  m10: 'Tank destroyer on the Sherman chassis with a 3-inch gun in an open-topped turret, in service from 1942. It traded armour for speed and a powerful gun.',
+  tetrarch: 'Light tank with a 2-pounder gun, later adapted to be carried into battle by glider. Tetrarchs landed with British airborne troops in Normandy in June 1944.',
+  cromwell: 'Fast British cruiser tank with a 75mm gun, in service from 1944. Its Meteor engine, derived from the Spitfire\'s Merlin, made it one of the fastest tanks of the war.',
+  churchill: 'Heavily armoured infantry tank built to climb rough ground and obstacles; the Mark VII had up to 152mm of frontal armour. Churchills sent to the Soviet Union fought at Kursk.',
+  achilles: 'The British conversion of the American M10 with the 17-pounder, one of the few Allied guns that could defeat the Tiger and Panther from the front at range.',
 };
 function placeInfoTip(x, y) {
   const t = ui.infotip, w = t.offsetWidth, h = t.offsetHeight;
@@ -2220,16 +2642,39 @@ function placeInfoTip(x, y) {
   t.style.top = (y + 18 + h > innerHeight - 8 ? y - h - 12 : y + 18) + 'px';
 }
 const infoOpen = () => !ui.info.classList.contains('hidden');
-function openInfo(team) { ui.info.classList.remove('hidden'); showInfo(team === 'su' ? 'su' : 'de'); }
+// opens on the two coalitions; clicking one shows its nations (your own side's coalition opens on your nation)
+const COALITION_ORDER = { Axis: ['de', 'it'], Allies: ['su', 'us', 'gb'] };
+const heroOpen = () => !document.getElementById('infohero').classList.contains('hidden');
+function openInfo() { ui.info.classList.remove('hidden'); showHero(); }
 function closeInfo() { ui.info.classList.add('hidden'); ui.infotip.classList.add('hidden'); }
+function showHero() {
+  const hero = document.getElementById('infohero');
+  hero.classList.remove('hidden');
+  document.getElementById('infonation').classList.add('hidden');
+  ui.infotip.classList.add('hidden');
+  // replay the entrance animation every time
+  hero.classList.remove('enter'); void hero.offsetWidth; hero.classList.add('enter');
+}
+function openCoalition(coal) {
+  document.getElementById('infohero').classList.add('hidden');
+  document.getElementById('infonation').classList.remove('hidden');
+  const cv = document.getElementById('coalbadge');
+  drawCoalitionBadge(cv.getContext('2d'), coal, cv.width, cv.height);
+  document.getElementById('coalname').textContent = coal;
+  const tabs = document.getElementById('nationtabs'), list = COALITION_ORDER[coal];
+  tabs.innerHTML = list.map(t => `<button class="${t}" data-team="${t}">${escapeHtml(TEAMS[t].name)}</button>`).join('');
+  tabs.querySelectorAll('button').forEach(b => b.addEventListener('click', () => showInfo(b.dataset.team)));
+  showInfo(list.includes(playerTeam) ? playerTeam : list[0]);
+}
 function showInfo(team) {
-  ui.info.querySelectorAll('.infotabs button').forEach(b => b.classList.toggle('sel', b.dataset.team === team));
+  document.querySelectorAll('#nationtabs button').forEach(b => b.classList.toggle('sel', b.dataset.team === team));
   const body = document.getElementById('infobody');
   const F = FACTION_INFO[team];
   let html = `<div class="infohead">
     <canvas width="160" height="160" data-mark="${team}"></canvas>
     <div class="infotext">
-      <div class="infoname">${escapeHtml(TEAMS[team].name)}</div>
+      <div class="infoname">${escapeHtml(TEAMS[team].name)}${Z.FACTIONS[team].playable ? '' : '<span class="infosoon">Coming soon</span>'}</div>
+      <div class="infonative">${escapeHtml(NATIVE_NAME[team] || '')}</div>
       <div class="infocoal"><canvas width="64" height="72" data-coal="${F.coalition}"></canvas>${F.coalition}</div>
       <p>${escapeHtml(F.desc)}</p>
     </div>
@@ -2248,7 +2693,8 @@ function showInfo(team) {
   // vehicles by category; hover one for a little of its real history
   html += '<div class="infosec">Vehicles</div>';
   CATS.forEach((cat, ci) => {
-    const ids = sideClasses(team).filter(id => CLASSES[id].cat === ci);
+    const ids = Z.FACTIONS[team].playable ? sideClasses(team).filter(id => CLASSES[id].cat === ci)
+      : CLASS_IDS.filter(id => CLASSES[id].faction === team && CLASSES[id].cat === ci);
     if (!ids.length) return;
     html += `<div class="infocat">${escapeHtml(cat.name)}</div><div class="infoveh">`;
     for (const id of ids) html += `<div data-id="${id}"><canvas width="320" height="240" data-veh="${id}"></canvas>${escapeHtml(CLASSES[id].name)}</div>`;
@@ -2367,6 +2813,7 @@ function saveSel() {
   try { localStorage.setItem('zitadelle.cls', JSON.stringify(selCls)); } catch (e) { /* ignore */ }
 }
 function updateUI(dt) {
+  document.body.classList.toggle('end-open', !!phase);   // hides the deploy-screen panels behind the end screen
   if (state === 'dead') {
     if (dmap.open) updateDeployMap(dt);
     refreshPicker(ui.deathPicker);
@@ -2408,26 +2855,35 @@ function startGame() {
 ui.deployBtn.addEventListener('click', startGame);
 nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') startGame(); });
 document.getElementById('tohq').addEventListener('click', switchSides);
-document.getElementById('infobtn').addEventListener('click', () => openInfo(playerTeam));
-document.getElementById('mapinfo').addEventListener('click', () => openInfo(playerTeam));
+document.getElementById('infobtn').addEventListener('click', openInfo);
+document.getElementById('mapinfo').addEventListener('click', openInfo);
+document.getElementById('infoback').addEventListener('click', showHero);
+ui.info.querySelectorAll('.herohalf').forEach(b => b.addEventListener('click', () => openCoalition(b.dataset.coal)));
+// member nations' emblems on the hero
+ui.info.querySelectorAll('.heronations [data-n] canvas').forEach(cv => {
+  const c = cv.getContext('2d'); c.save(); c.translate(cv.width / 2, cv.height / 2);
+  drawFactionMark(c, cv.parentElement.dataset.n, cv.width * 0.36); c.restore();
+});
 document.getElementById('infoclose').addEventListener('click', closeInfo);
-ui.info.querySelectorAll('.infotabs button').forEach(b => b.addEventListener('click', () => showInfo(b.dataset.team)));
-addEventListener('keydown', e => { if (e.key === 'Escape' && infoOpen()) { e.stopImmediatePropagation(); closeInfo(); } }, true);
+ui.info.querySelectorAll('canvas[data-coalhead]').forEach(cv => drawCoalitionBadge(cv.getContext('2d'), cv.dataset.coalhead, cv.width, cv.height));
+addEventListener('keydown', e => {
+  if (e.key === 'Escape' && infoOpen()) { e.stopImmediatePropagation(); if (heroOpen()) closeInfo(); else showHero(); }
+}, true);
 document.getElementById('tomenu').addEventListener('click', () => {
   if (you) { send({ t: 'leave' }); you = null; }
   backToMenu();
 });
 canvas.addEventListener('click', () => {
-  if (state !== 'dead' || !dmap.open || showBoard) return;
+  if (state !== 'dead' || !dmap.open || showBoard || phase) return;
   if (dmap.stage === 'map') { if (dmap.hover && dmap.hover.ok) chooseSpawn(dmap.hover); }
   else if (dmap.stage === 'pick' && overDeployButton(mouse.x, mouse.y)) { if (dmap.canDeploy) deploy(playerTeam); }
   else backToMap();   // zoomed in on a point: clicking anywhere else off the vehicle panel pulls back out
 });
 addEventListener('keydown', e => {
   if (e.key === 'Tab' && e.target.tagName !== 'INPUT') {
-    // the board takes over: let go of everything (driving, firing) until Tab is released
+    // the board takes over the mouse: stop firing until Tab is released (driving carries on)
     e.preventDefault(); showBoard = true; document.body.classList.add('board-open');
-    keys.clear(); mouse.down = mouse.rdown = false;
+    mouse.down = mouse.rdown = false;
   }
   if (showBoard) return;
   if (state !== 'dead' || !dmap.open || e.target.tagName === 'INPUT') return;
@@ -2435,6 +2891,7 @@ addEventListener('keydown', e => {
   if (e.key === 'Escape') { if (dmap.stage !== 'map') backToMap(); else if (!you) backToMenu(); }
   if (e.key.toLowerCase() === 't' && !e.repeat) switchSides();
 });
+addEventListener('keydown', e => { if (devMode && e.key === 'F9') { e.preventDefault(); send({ t: 'dev_end', w: you ? you.team : playerTeam }); } });
 addEventListener('keyup', e => { if (e.key === 'Tab') { showBoard = false; document.body.classList.remove('board-open'); } });
 addEventListener('blur', () => { showBoard = false; document.body.classList.remove('board-open'); });
 
