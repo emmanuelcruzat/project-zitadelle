@@ -775,9 +775,9 @@ function drawIntro() {
   ctx.globalAlpha = out;
   ctx.fillStyle = col; ctx.fillRect(cx - lw / 2, cy + fs * 0.95, lw, 3);
   ctx.globalAlpha = ease((a - 1.1) / 0.5) * out;
-  // "DEUTSCHES REICH · GERMANY · [shield] AXIS"
+  // "DEUTSCHES REICH · [shield] AXIS"
   const coal = Z.FACTIONS[intro.team].coalition, ts = Math.max(13, fs * 0.2), ty = cy + fs * 0.95 + 26;
-  const lead = `${T.sub}  ·  ${TEAMS[intro.team].name.toUpperCase()}  ·  `, word = coal.toUpperCase();
+  const lead = `${T.sub}  ·  `, word = coal.toUpperCase();
   ctx.font = `400 ${ts}px Oswald, Impact, sans-serif`;
   const bh = ts * 1.5, bw = bh * 64 / 72, gap = ts * 0.4;
   const ldw = ctx.measureText(lead).width, ww = ctx.measureText(word).width, x0 = cx - (ldw + bw + gap + ww) / 2;
@@ -965,6 +965,7 @@ function handleEvent(e) {
     case 'm': bigMessage(e.text, e.d); break;
     case 'aw': addAward(e.l, e.n); break;
     case 'mk': addSpot(e); break;
+    case 'chat': addChat(e); break;
     case 'intro': battleIntro(e.t); break;
     case 'sh': cam.shake = Math.min(14, cam.shake + e.a); break;
     case 'die': onPlayerDeath(e); break;
@@ -2737,6 +2738,12 @@ const ui = {
   mapbar: document.getElementById('mapbar'),
   info: document.getElementById('info'),
   infotip: document.getElementById('infotip'),
+  chat: document.getElementById('chat'),
+  chatlog: document.getElementById('chatlog'),
+  chatbar: document.getElementById('chatbar'),
+  chatmode: document.getElementById('chatmode'),
+  chatinput: document.getElementById('chatinput'),
+  chathint: document.getElementById('chathint'),
   dpname: document.getElementById('dpname'),
 };
 function setStatus(text) {
@@ -2812,7 +2819,62 @@ function refreshPicker(el) {
 function saveSel() {
   try { localStorage.setItem('zitadelle.cls', JSON.stringify(selCls)); } catch (e) { /* ignore */ }
 }
+// ---- chat ----
+const CHAT_LINES = 8;          // messages kept on screen
+let chatOpen = false, chatTeam = true;   // team chat by default; Tab switches
+const chatMsgs = [];
+function openChat() {
+  chatOpen = true;
+  keys.clear(); mouse.down = mouse.rdown = false;      // stop driving/firing while typing
+  ui.chatbar.classList.remove('hidden');
+  ui.chatinput.value = '';
+  updateChatMode();
+  ui.chatinput.focus();
+}
+function closeChat() {
+  if (!chatOpen) return;
+  chatOpen = false;
+  ui.chatbar.classList.add('hidden');
+  ui.chatinput.blur();
+}
+function updateChatMode() {
+  ui.chatmode.textContent = chatTeam ? 'TEAM' : 'ALL';
+  ui.chatmode.className = 'chatmode ' + (chatTeam ? 'team' : 'all');
+}
+function addChat(e) {
+  const team = TEAM_IDS[e.t], el = document.createElement('div');
+  el.className = 'chatline';
+  // team-only messages are written in the team's colour; all-chat text stays plain
+  const col = TEAMS[team] ? TEAMS[team].mini : '#ddd';
+  el.innerHTML = `<b style="color:${col}">${escapeHtml(e.n)}</b>: <span${e.tm ? ` style="color:${col}"` : ''}>${escapeHtml(e.x)}</span>`;
+  ui.chatlog.appendChild(el);
+  chatMsgs.push({ el, t: now });
+  while (chatMsgs.length > 40) chatMsgs.shift().el.remove();
+}
+function updateChat() {
+  ui.chat.classList.toggle('hidden', state === 'menu');
+  ui.chathint.classList.toggle('hidden', chatOpen);
+  // the last few messages stay up (no fading); older ones scroll away
+  chatMsgs.forEach((m, i) => { m.el.style.display = i >= chatMsgs.length - CHAT_LINES ? '' : 'none'; });
+}
+ui.chatinput.addEventListener('keydown', e => {
+  e.stopPropagation();                                     // typing never reaches the game's key handlers
+  if (e.key === 'Tab') { e.preventDefault(); chatTeam = !chatTeam; updateChatMode(); }
+  else if (e.key === 'Enter') {
+    const x = ui.chatinput.value.trim();
+    if (x) send({ t: 'chat', x, tm: chatTeam ? 1 : 0 });
+    closeChat();
+  } else if (e.key === 'Escape') closeChat();
+});
+ui.chatinput.addEventListener('blur', closeChat);
+// Enter opens the chat while driving or looking at the battle map (on the vehicle panel Enter still deploys)
+addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || chatOpen || showBoard || e.target.tagName === 'INPUT') return;
+  if (state === 'play' || (state === 'dead' && dmap.open && dmap.stage === 'map')) { e.preventDefault(); openChat(); }
+});
+
 function updateUI(dt) {
+  updateChat();
   document.body.classList.toggle('end-open', !!phase);   // hides the deploy-screen panels behind the end screen
   if (state === 'dead') {
     if (dmap.open) updateDeployMap(dt);

@@ -1102,6 +1102,16 @@ function createGame(opts = {}) {
         break;
       // choosing where to deploy: stream the area around the point being looked at
       // spot an enemy: tell everyone on your side (at most one mark a second per player)
+      // chat: to everyone, or (tm) only your own side; plain text, short, at most one message every 0.6 s
+      case 'chat': {
+        if (!t) break;
+        const text = String(m.x || '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 120);
+        if (!text || time - (client.chatT ?? -9) < 0.6) break;
+        client.chatT = time;
+        const msg = { e: 'chat', n: t.name, t: TEAM_IDS.indexOf(t.team), tm: m.tm ? 1 : 0, x: text };
+        for (const c of clients) if (c.tank && (!msg.tm || c.tank.team === t.team)) c.pending.push(msg);
+        break;
+      }
       case 'mark':
         if (t && t.alive && phase === 'play' && Number.isInteger(m.c) && m.c >= 0 && m.c < CATS.length && time - (client.lastMark ?? -9) >= 1) {
           client.lastMark = time;
