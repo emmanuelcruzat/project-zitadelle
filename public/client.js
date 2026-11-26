@@ -724,6 +724,16 @@ function drawEndScreen(myTeam) {
   hudText(`Next battle in ${secs}s  ·  T — switch sides`, cx, cy2 - 14, 13, '#b9b195', 'center', 400);
   ctx.restore();
 }
+// coalition shields pre-rendered once (drawCoalitionBadge clears the canvas it's given)
+const coalBadgeCache = {};
+function coalitionBadgeImage(coal) {
+  if (!coalBadgeCache[coal]) {
+    const cv = document.createElement('canvas'); cv.width = 128; cv.height = 144;
+    drawCoalitionBadge(cv.getContext('2d'), coal, cv.width, cv.height);
+    coalBadgeCache[coal] = cv;
+  }
+  return coalBadgeCache[coal];
+}
 function battleIntro(team) {
   if (!TEAMS[team] || !INTRO_TEXT[team]) return;
   intro = { team, t: now };
@@ -765,8 +775,15 @@ function drawIntro() {
   ctx.globalAlpha = out;
   ctx.fillStyle = col; ctx.fillRect(cx - lw / 2, cy + fs * 0.95, lw, 3);
   ctx.globalAlpha = ease((a - 1.1) / 0.5) * out;
-  const coal = intro.team === 'de' ? 'Axis' : 'Allies';
-  hudText(`${T.sub}  ·  ${TEAMS[intro.team].name.toUpperCase()}  ·  ${coal.toUpperCase()}`, cx, cy + fs * 0.95 + 26, Math.max(13, fs * 0.2), '#d9cf9f', 'center', 400);
+  // "DEUTSCHES REICH · GERMANY · [shield] AXIS"
+  const coal = Z.FACTIONS[intro.team].coalition, ts = Math.max(13, fs * 0.2), ty = cy + fs * 0.95 + 26;
+  const lead = `${T.sub}  ·  ${TEAMS[intro.team].name.toUpperCase()}  ·  `, word = coal.toUpperCase();
+  ctx.font = `400 ${ts}px Oswald, Impact, sans-serif`;
+  const bh = ts * 1.5, bw = bh * 64 / 72, gap = ts * 0.4;
+  const ldw = ctx.measureText(lead).width, ww = ctx.measureText(word).width, x0 = cx - (ldw + bw + gap + ww) / 2;
+  hudText(lead, x0, ty, ts, '#d9cf9f', 'left', 400);
+  ctx.drawImage(coalitionBadgeImage(coal), x0 + ldw, ty - bh / 2, bw, bh);
+  hudText(word, x0 + ldw + bw + gap, ty, ts, '#d9cf9f', 'left', 400);
   ctx.restore();
 }
 let deathInfo = null;
@@ -2514,6 +2531,14 @@ function drawBoard() {
 // =====================================================================
 // Faction info: each side's role, ranks and vehicles
 // =====================================================================
+// each nation's official name in its own language, as of 1943
+const NATIVE_NAME = {
+  de: 'Deutsches Reich',
+  su: 'Союз Советских Социалистических Республик',
+  it: "Regno d'Italia",
+  us: 'United States of America',
+  gb: 'United Kingdom of Great Britain and Northern Ireland',
+};
 const FACTION_INFO = {
   de: { coalition: 'Axis', desc: 'In July 1943 Germany launched Operation Citadel, a pincer attack on the northern and southern '
     + 'faces of the Kursk salient meant to encircle the Soviet armies inside it. The offensive was delayed for months to bring up '
@@ -2531,7 +2556,7 @@ const FACTION_INFO = {
     + 'thousands of tanks to the Soviet Union on the Arctic convoys; British-built Churchills fought with the Red Army at Kursk. '
     + 'In July 1943 British and Commonwealth troops landed in Sicily with the Americans.' },
 };
-// coalition badge: a shield. Axis: black with a silver rim and a gold bar; Allies: olive with the white Allied star.
+// coalition badge: a shield. Axis: black with a silver rim and a gold X; Allies: olive with an olive branch.
 function drawCoalitionBadge(c, coalition, w, h) {
   const axis = coalition === 'Axis';
   c.clearRect(0, 0, w, h);
@@ -2544,13 +2569,26 @@ function drawCoalitionBadge(c, coalition, w, h) {
   c.lineWidth = w * 0.06; c.strokeStyle = axis ? '#bfc3c4' : '#d9cf9f'; c.stroke();
   const cx = w / 2, cy = sy + sh * 0.45;
   if (axis) {
-    c.fillStyle = '#c9a23a'; c.fillRect(sx + sw * 0.18, cy - h * 0.05, sw * 0.64, h * 0.1);
+    // a bold gold X
+    const r = w * 0.2;
+    c.lineCap = 'butt'; c.strokeStyle = '#d4ad47'; c.lineWidth = w * 0.1;
+    c.beginPath(); c.moveTo(cx - r, cy - r); c.lineTo(cx + r, cy + r); c.moveTo(cx + r, cy - r); c.lineTo(cx - r, cy + r); c.stroke();
   } else {
-    const r = w * 0.26;
-    c.beginPath(); c.arc(cx, cy, r * 1.12, 0, TAU); c.lineWidth = w * 0.035; c.strokeStyle = '#f2f2ea'; c.stroke();
-    c.beginPath();
-    for (let i = 0; i < 10; i++) { const rr = i % 2 ? r * 0.4 : r, a = -Math.PI / 2 + i * Math.PI / 5; c.lineTo(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr); }
-    c.closePath(); c.fillStyle = '#f2f2ea'; c.fill();
+    // olive branch: a gently curving stem with paired leaves and two olives, in white
+    const u = w * 0.01;
+    const P = t => ({ x: cx - 18 * u + 36 * u * t, y: cy + 26 * u - 52 * u * t - Math.sin(t * Math.PI) * 6 * u });   // point along the stem
+    c.strokeStyle = '#f2f2ea'; c.lineWidth = 2.6 * u; c.lineCap = 'round';
+    c.beginPath(); for (let i = 0; i <= 20; i++) { const q = P(i / 20); if (i) c.lineTo(q.x, q.y); else c.moveTo(q.x, q.y); } c.stroke();
+    const leaf = (t, side, len) => {
+      const q = P(t), q2 = P(Math.min(1, t + 0.02)), ang = Math.atan2(q2.y - q.y, q2.x - q.x) + side * 0.75;
+      c.save(); c.translate(q.x, q.y); c.rotate(ang);
+      c.beginPath(); c.moveTo(0, 0); c.quadraticCurveTo(len * 0.5, -len * 0.28, len, 0); c.quadraticCurveTo(len * 0.5, len * 0.28, 0, 0);
+      c.fillStyle = '#f2f2ea'; c.fill(); c.restore();
+    };
+    for (const [t, side] of [[0.22, 1], [0.32, -1], [0.45, 1], [0.55, -1], [0.68, 1], [0.78, -1]]) leaf(t, side, 15 * u);
+    leaf(0.97, 0, 13 * u);
+    c.fillStyle = '#f2f2ea';
+    for (const [t, side] of [[0.38, -1], [0.62, 1]]) { const q = P(t); c.beginPath(); c.arc(q.x + side * 6 * u, q.y + 4 * u, 2.6 * u, 0, TAU); c.fill(); }
   }
 }
 // real-life background for each vehicle, shown on hover in the faction info screen
@@ -2604,16 +2642,39 @@ function placeInfoTip(x, y) {
   t.style.top = (y + 18 + h > innerHeight - 8 ? y - h - 12 : y + 18) + 'px';
 }
 const infoOpen = () => !ui.info.classList.contains('hidden');
-function openInfo(team) { ui.info.classList.remove('hidden'); showInfo(Z.FACTIONS[team] ? team : 'de'); }
+// opens on the two coalitions; clicking one shows its nations (your own side's coalition opens on your nation)
+const COALITION_ORDER = { Axis: ['de', 'it'], Allies: ['su', 'us', 'gb'] };
+const heroOpen = () => !document.getElementById('infohero').classList.contains('hidden');
+function openInfo() { ui.info.classList.remove('hidden'); showHero(); }
 function closeInfo() { ui.info.classList.add('hidden'); ui.infotip.classList.add('hidden'); }
+function showHero() {
+  const hero = document.getElementById('infohero');
+  hero.classList.remove('hidden');
+  document.getElementById('infonation').classList.add('hidden');
+  ui.infotip.classList.add('hidden');
+  // replay the entrance animation every time
+  hero.classList.remove('enter'); void hero.offsetWidth; hero.classList.add('enter');
+}
+function openCoalition(coal) {
+  document.getElementById('infohero').classList.add('hidden');
+  document.getElementById('infonation').classList.remove('hidden');
+  const cv = document.getElementById('coalbadge');
+  drawCoalitionBadge(cv.getContext('2d'), coal, cv.width, cv.height);
+  document.getElementById('coalname').textContent = coal;
+  const tabs = document.getElementById('nationtabs'), list = COALITION_ORDER[coal];
+  tabs.innerHTML = list.map(t => `<button class="${t}" data-team="${t}">${escapeHtml(TEAMS[t].name)}</button>`).join('');
+  tabs.querySelectorAll('button').forEach(b => b.addEventListener('click', () => showInfo(b.dataset.team)));
+  showInfo(list.includes(playerTeam) ? playerTeam : list[0]);
+}
 function showInfo(team) {
-  ui.info.querySelectorAll('.infotabs button').forEach(b => b.classList.toggle('sel', b.dataset.team === team));
+  document.querySelectorAll('#nationtabs button').forEach(b => b.classList.toggle('sel', b.dataset.team === team));
   const body = document.getElementById('infobody');
   const F = FACTION_INFO[team];
   let html = `<div class="infohead">
     <canvas width="160" height="160" data-mark="${team}"></canvas>
     <div class="infotext">
-      <div class="infoname">${escapeHtml(TEAMS[team].name)}${Z.FACTIONS[team].playable ? '' : '<span class="infosoon">Not yet playable</span>'}</div>
+      <div class="infoname">${escapeHtml(TEAMS[team].name)}${Z.FACTIONS[team].playable ? '' : '<span class="infosoon">Coming soon</span>'}</div>
+      <div class="infonative">${escapeHtml(NATIVE_NAME[team] || '')}</div>
       <div class="infocoal"><canvas width="64" height="72" data-coal="${F.coalition}"></canvas>${F.coalition}</div>
       <p>${escapeHtml(F.desc)}</p>
     </div>
@@ -2794,11 +2855,20 @@ function startGame() {
 ui.deployBtn.addEventListener('click', startGame);
 nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') startGame(); });
 document.getElementById('tohq').addEventListener('click', switchSides);
-document.getElementById('infobtn').addEventListener('click', () => openInfo(playerTeam));
-document.getElementById('mapinfo').addEventListener('click', () => openInfo(playerTeam));
+document.getElementById('infobtn').addEventListener('click', openInfo);
+document.getElementById('mapinfo').addEventListener('click', openInfo);
+document.getElementById('infoback').addEventListener('click', showHero);
+ui.info.querySelectorAll('.herohalf').forEach(b => b.addEventListener('click', () => openCoalition(b.dataset.coal)));
+// member nations' emblems on the hero
+ui.info.querySelectorAll('.heronations [data-n] canvas').forEach(cv => {
+  const c = cv.getContext('2d'); c.save(); c.translate(cv.width / 2, cv.height / 2);
+  drawFactionMark(c, cv.parentElement.dataset.n, cv.width * 0.36); c.restore();
+});
 document.getElementById('infoclose').addEventListener('click', closeInfo);
-ui.info.querySelectorAll('.infotabs button').forEach(b => b.addEventListener('click', () => showInfo(b.dataset.team)));
-addEventListener('keydown', e => { if (e.key === 'Escape' && infoOpen()) { e.stopImmediatePropagation(); closeInfo(); } }, true);
+ui.info.querySelectorAll('canvas[data-coalhead]').forEach(cv => drawCoalitionBadge(cv.getContext('2d'), cv.dataset.coalhead, cv.width, cv.height));
+addEventListener('keydown', e => {
+  if (e.key === 'Escape' && infoOpen()) { e.stopImmediatePropagation(); if (heroOpen()) closeInfo(); else showHero(); }
+}, true);
 document.getElementById('tomenu').addEventListener('click', () => {
   if (you) { send({ t: 'leave' }); you = null; }
   backToMenu();
