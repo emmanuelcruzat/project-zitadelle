@@ -79,6 +79,11 @@ const VEHICLES = {
     speed: 0.95, hp: 1.1, traverse: 1.9, fov: 1.2, ram: 1,
     gun: { reload: 1.2, dmg: 1.6, spd: 1.55, pen: 1.5, spread: 0.03, range: 1.45, recoil: 1.8 },
   },
+  nashorn: { // 88mm PaK 43/1 L/71
+    armor: [30, 20, 10], slope: 10, pen: 185, ammo: 40, apcr: 4, logi: 180, cal: 88,
+    speed: 0.95, hp: 1.1, traverse: 1.6, fov: 1.4, ram: 1,
+    gun: { reload: 1.35, dmg: 2.3, spd: 1.7, pen: 1.8, spread: 0.03, range: 1.55, recoil: 2 },
+  },
   sdkfz: { // (switched off)
     speed: 1.2, hp: 0.85, traverse: 6, fov: 1, ram: 1,
     gun: { reload: 0.3, dmg: 0.36, spd: 1, pen: 0.6, spread: 0.12, range: 1, recoil: 0.2 },
@@ -235,67 +240,172 @@ const VEHICLES = {
   // ---- Italy (not playable yet) ----
   l640: { // 20mm Breda 35
     armor: [30, 15, 15],    slope: 10, pen: 24, ammo: 296, apcr: 30, cal: 20,
-    speed: 1.15, hp: 0.8, traverse: 4.2, fov: 1, ram: 1, capture: 2,
+    speed: 1.15, hp: 0.8, traverse: 4.2, fov: 1.5, ram: 1, capture: 2,
     gun: { reload: 2, dmg: 0.38, spd: 1.1, pen: 0.55, spread: 0.06, range: 1, recoil: 0.3, clip: 8, cycle: 0.3 },
   },
   m1340: { // 47mm 47/32
     armor: [30, 25, 25],    slope: 15, pen: 43, ammo: 104, apcr: 10, cal: 47,
-    speed: 0.92, hp: 1, traverse: 3, fov: 1, ram: 1,
+    speed: 0.92, hp: 1, traverse: 3, fov: 1.2, ram: 1,
     gun: { reload: 0.6, dmg: 0.75, spd: 1.1, pen: 0.85, spread: 0.03, range: 1, recoil: 0.7 },
   },
   p2640: { // 75mm 75/34
     armor: [50, 45, 40],    slope: 40, pen: 70, ammo: 65, apcr: 6, cal: 75,
-    speed: 0.95, hp: 1.7, traverse: 2.6, fov: 1, ram: 1,
+    speed: 0.95, hp: 1.7, traverse: 2.6, fov: 1.0, ram: 1,
     gun: { reload: 1, dmg: 1.2, spd: 1.1, pen: 1.05, spread: 0.03, range: 1, recoil: 1.2 },
   },
   sem7518: { // 75mm 75/18 (shaped charge)
     armor: [50, 25, 25],    slope: 20, pen: 70, ammo: 44, apcr: 0, cal: 75,
-    speed: 0.95, hp: 1.1, traverse: 2, fov: 1, ram: 1,
+    speed: 0.95, hp: 1.1, traverse: 2, fov: 1.2, ram: 1,
     gun: { reload: 1.2, dmg: 1.3, spd: 0.85, pen: 1.2, spread: 0.03, range: 1, recoil: 1.4, splash: 0.6 },
+  },
+  m1139: { // 37mm Vickers-Terni L/40
+    armor: [30, 15, 15], slope: 10, pen: 38, ammo: 84, apcr: 10, logi: 0, cal: 37,
+    speed: 0.9, hp: 0.8, traverse: 3.5, fov: 1.5, ram: 1, capture: 2,
+    gun: { reload: 0.55, dmg: 0.58, spd: 1.05, pen: 0.75, spread: 0.05, range: 1, recoil: 0.5 },
+  },
+  m1441: { // 47mm 47/32
+    armor: [30, 25, 25], slope: 15, pen: 45, ammo: 104, apcr: 10, logi: 30, cal: 47,
+    speed: 0.95, hp: 1, traverse: 3.0, fov: 1.2, ram: 1,
+    gun: { reload: 0.6, dmg: 0.78, spd: 1.12, pen: 0.88, spread: 0.04, range: 1, recoil: 0.7 },
+  },
+  m1542: { // 47mm 47/40
+    armor: [42, 25, 25], slope: 15, pen: 55, ammo: 111, apcr: 12, logi: 45, cal: 47,
+    speed: 1.0, hp: 1, traverse: 3.0, fov: 1.2, ram: 1,
+    gun: { reload: 0.6, dmg: 0.82, spd: 1.25, pen: 0.95, spread: 0.04, range: 1.1, recoil: 0.7 },
+  },
+  sem4732: { // 47mm 47/32
+    armor: [30, 15, 10], slope: 10, pen: 43, ammo: 70, apcr: 8, logi: 15, cal: 47,
+    speed: 1.15, hp: 1.1, traverse: 2.6, fov: 1.2, ram: 1,
+    gun: { reload: 0.55, dmg: 0.75, spd: 1.1, pen: 0.85, spread: 0.04, range: 1.05, recoil: 0.6 },
+  },
+  sem7534: { // 75mm 75/34
+    armor: [50, 25, 25], slope: 20, pen: 70, ammo: 42, apcr: 6, logi: 75, cal: 75,
+    speed: 0.95, hp: 1.1, traverse: 2.0, fov: 1.2, ram: 1,
+    gun: { reload: 1.15, dmg: 1.3, spd: 1.15, pen: 1.1, spread: 0.03, range: 1.15, recoil: 1.4 },
+  },
+  sem10525: { // 105mm 105/25 (shaped charge)
+    armor: [75, 25, 25], slope: 20, pen: 90, ammo: 48, apcr: 0, logi: 150, cal: 105,
+    speed: 0.9, hp: 1.5, traverse: 1.8, fov: 1.0, ram: 1,
+    gun: { reload: 1.7, dmg: 2.2, spd: 0.85, pen: 1.6, spread: 0.03, range: 1.05, recoil: 2.2, splash: 1.1 },
+  },
+  sem9053: { // 90mm 90/53
+    armor: [30, 15, 10], slope: 10, pen: 150, ammo: 26, apcr: 4, logi: 150, cal: 90,
+    speed: 0.9, hp: 1.5, traverse: 1.5, fov: 1.4, ram: 1,
+    gun: { reload: 1.6, dmg: 2.3, spd: 1.65, pen: 1.8, spread: 0.03, range: 1.55, recoil: 2.2 },
   },
 
   // ---- United States (not playable yet) ----
   m3stuart: { // 37mm M6
     armor: [38, 25, 25],    slope: 20, pen: 46, ammo: 103, apcr: 10, cal: 37,
-    speed: 1.3, hp: 0.8, traverse: 4.4, fov: 1, ram: 1, capture: 2,
+    speed: 1.3, hp: 0.8, traverse: 4.4, fov: 1.5, ram: 1, capture: 2,
     gun: { reload: 0.48, dmg: 0.58, spd: 1.15, pen: 0.8, spread: 0.05, range: 1, recoil: 0.5 },
   },
   m4sherman: { // 75mm M3
     armor: [51, 38, 38],    slope: 56, pen: 76, ammo: 97, apcr: 6, cal: 75,
-    speed: 1.05, hp: 1, traverse: 3.4, fov: 1, ram: 1,
+    speed: 1.05, hp: 1, traverse: 3.4, fov: 1.2, ram: 1,
     gun: { reload: 1, dmg: 1.15, spd: 1.1, pen: 1, spread: 0.03, range: 1, recoil: 1 },
   },
   m26: { // 90mm M3
     armor: [102, 76, 51],   slope: 46, pen: 147, ammo: 70, apcr: 6, cal: 90,
-    speed: 0.92, hp: 1.7, traverse: 2.2, fov: 1, ram: 1,
+    speed: 0.92, hp: 1.7, traverse: 2.2, fov: 1.0, ram: 1,
     gun: { reload: 1.35, dmg: 2, spd: 1.45, pen: 1.75, spread: 0.03, range: 1.3, recoil: 2 },
   },
   m10: { // 3-inch M7
     armor: [51, 19, 19],    slope: 55, pen: 99, ammo: 54, apcr: 6, cal: 76,
-    speed: 1.02, hp: 1.1, traverse: 1.7, fov: 1.3, ram: 1,
+    speed: 1.02, hp: 1.1, traverse: 1.7, fov: 1.2, ram: 1,
     gun: { reload: 1.2, dmg: 1.6, spd: 1.45, pen: 1.5, spread: 0.03, range: 1.4, recoil: 1.6 },
+  },
+  m5stuart: { // 37mm M6
+    armor: [51, 28, 25], slope: 30, pen: 53, ammo: 123, apcr: 12, logi: 0, cal: 37,
+    speed: 1.35, hp: 0.8, traverse: 4.5, fov: 1.5, ram: 1, capture: 2,
+    gun: { reload: 0.46, dmg: 0.6, spd: 1.2, pen: 0.85, spread: 0.05, range: 1, recoil: 0.5 },
+  },
+  m24: { // 75mm M6
+    armor: [38, 25, 19], slope: 60, pen: 76, ammo: 48, apcr: 6, logi: 30, cal: 75,
+    speed: 1.35, hp: 0.8, traverse: 4.2, fov: 1.5, ram: 1, capture: 2,
+    gun: { reload: 0.95, dmg: 1.15, spd: 1.1, pen: 1.0, spread: 0.03, range: 1, recoil: 0.9 },
+  },
+  m4a1_76: { // 76mm M1
+    armor: [64, 38, 38], slope: 47, pen: 116, ammo: 71, apcr: 8, logi: 90, cal: 76,
+    speed: 1.05, hp: 1, traverse: 3.4, fov: 1.2, ram: 1,
+    gun: { reload: 1.1, dmg: 1.35, spd: 1.4, pen: 1.4, spread: 0.03, range: 1.3, recoil: 1.2 },
+  },
+  m4a3e8: { // 76mm M1A2
+    armor: [64, 38, 38], slope: 47, pen: 116, ammo: 71, apcr: 10, logi: 120, cal: 76,
+    speed: 1.15, hp: 1, traverse: 3.4, fov: 1.2, ram: 1,
+    gun: { reload: 1.05, dmg: 1.35, spd: 1.45, pen: 1.45, spread: 0.03, range: 1.35, recoil: 1.2 },
+  },
+  m18: { // 76mm M1A1
+    armor: [25, 13, 13], slope: 38, pen: 99, ammo: 45, apcr: 6, logi: 75, cal: 76,
+    speed: 1.5, hp: 1.1, traverse: 3.2, fov: 1.2, ram: 1,
+    gun: { reload: 1.1, dmg: 1.4, spd: 1.45, pen: 1.4, spread: 0.03, range: 1.35, recoil: 1.3 },
+  },
+  m36: { // 90mm M3
+    armor: [51, 19, 19], slope: 55, pen: 147, ammo: 47, apcr: 6, logi: 180, cal: 90,
+    speed: 1.05, hp: 1.5, traverse: 2.0, fov: 1.4, ram: 1,
+    gun: { reload: 1.4, dmg: 2.0, spd: 1.6, pen: 1.75, spread: 0.03, range: 1.5, recoil: 2 },
+  },
+  m4a3e2: { // 75mm M3
+    armor: [100, 76, 38], slope: 47, pen: 76, ammo: 104, apcr: 6, logi: 210, cal: 75,
+    speed: 0.85, hp: 1.7, traverse: 2.8, fov: 1.0, ram: 1,
+    gun: { reload: 1.0, dmg: 1.15, spd: 1.1, pen: 1.0, spread: 0.03, range: 1, recoil: 1 },
+  },
+  t28gmc: { // 105mm T5E1
+    armor: [305, 64, 51], slope: 0, pen: 200, ammo: 62, apcr: 0, logi: 360, cal: 105,
+    speed: 0.55, hp: 1.5, traverse: 0.9, fov: 1.0, ram: 1, steer: 'neutral',
+    gun: { reload: 2.1, dmg: 3.0, spd: 1.7, pen: 2.4, spread: 0.03, range: 1.6, recoil: 2.6 },
   },
 
   // ---- United Kingdom (not playable yet) ----
   tetrarch: { // 2-pounder
     armor: [16, 14, 14],    slope: 10, pen: 52, ammo: 50, apcr: 8, cal: 40,
-    speed: 1.28, hp: 0.8, traverse: 4.3, fov: 1, ram: 1, capture: 2,
+    speed: 1.28, hp: 0.8, traverse: 4.3, fov: 1.5, ram: 1, capture: 2,
     gun: { reload: 0.46, dmg: 0.6, spd: 1.2, pen: 0.85, spread: 0.05, range: 1, recoil: 0.5 },
   },
   cromwell: { // 75mm OQF
     armor: [76, 32, 32],    slope: 0,  pen: 68, ammo: 64, apcr: 6, cal: 75,
-    speed: 1.3, hp: 1, traverse: 3.2, fov: 1, ram: 1, steer: 'neutral',
+    speed: 1.3, hp: 1, traverse: 3.2, fov: 1.2, ram: 1, steer: 'neutral',
     gun: { reload: 1, dmg: 1.15, spd: 1.1, pen: 1, spread: 0.03, range: 1, recoil: 1 },
+  },
+  matilda2: { // 2-pounder
+    armor: [78, 65, 55], slope: 0, pen: 52, ammo: 93, apcr: 10, logi: 90, cal: 40,
+    speed: 0.6, hp: 1.7, traverse: 3.0, fov: 1, ram: 1.4,
+    gun: { reload: 0.46, dmg: 0.6, spd: 1.2, pen: 0.85, spread: 0.05, range: 1, recoil: 0.5 },
   },
   churchill: { // 75mm OQF
     armor: [152, 95, 50],   slope: 0,  pen: 68, ammo: 84, apcr: 6, cal: 75,
-    speed: 0.7, hp: 1.7, traverse: 2.4, fov: 1, ram: 1.5, steer: 'neutral',
+    speed: 0.7, hp: 1.7, traverse: 2.4, fov: 1.0, ram: 1.5, steer: 'neutral',
     gun: { reload: 1, dmg: 1.15, spd: 1.1, pen: 1, spread: 0.03, range: 1, recoil: 1 },
   },
   achilles: { // 17-pounder
     armor: [51, 19, 19],    slope: 55, pen: 171, ammo: 50, apcr: 8, cal: 76,
-    speed: 1.02, hp: 1.1, traverse: 1.7, fov: 1.4, ram: 1,
+    speed: 1.02, hp: 1.1, traverse: 1.7, fov: 1.2, ram: 1,
     gun: { reload: 1.4, dmg: 2.3, spd: 1.75, pen: 1.95, spread: 0.03, range: 1.55, recoil: 2 },
+  },
+  crusader3: { // 6-pounder
+    armor: [51, 28, 28], slope: 20, pen: 89, ammo: 65, apcr: 8, logi: 30, cal: 57,
+    speed: 1.35, hp: 1, traverse: 3.6, fov: 1.2, ram: 1,
+    gun: { reload: 0.8, dmg: 0.95, spd: 1.3, pen: 1.15, spread: 0.04, range: 1.15, recoil: 0.9 },
+  },
+  firefly: { // 17-pounder
+    armor: [51, 38, 38], slope: 56, pen: 171, ammo: 77, apcr: 8, logi: 150, cal: 76,
+    speed: 1.0, hp: 1, traverse: 3.2, fov: 1.2, ram: 1,
+    gun: { reload: 1.4, dmg: 2.2, spd: 1.75, pen: 1.9, spread: 0.03, range: 1.5, recoil: 2 },
+  },
+  comet: { // 77mm HV
+    armor: [76, 43, 32], slope: 0, pen: 165, ammo: 61, apcr: 8, logi: 150, cal: 76,
+    speed: 1.25, hp: 1, traverse: 3.2, fov: 1.2, ram: 1, steer: 'neutral',
+    gun: { reload: 1.25, dmg: 1.9, spd: 1.7, pen: 1.85, spread: 0.03, range: 1.45, recoil: 1.8 },
+  },
+  archer: { // 17-pounder
+    armor: [20, 14, 14], slope: 30, pen: 171, ammo: 39, apcr: 6, logi: 120, cal: 76,
+    speed: 1.0, hp: 1.1, traverse: 1.8, fov: 1.2, ram: 1,
+    gun: { reload: 1.45, dmg: 2.3, spd: 1.75, pen: 1.95, spread: 0.03, range: 1.55, recoil: 2 },
+  },
+  tortoise: { // 32-pounder
+    armor: [228, 152, 152], slope: 0, pen: 220, ammo: 60, apcr: 0, logi: 420, cal: 94,
+    speed: 0.5, hp: 1.5, traverse: 0.8, fov: 1.0, ram: 1, steer: 'neutral',
+    gun: { reload: 2.3, dmg: 3.3, spd: 1.75, pen: 2.5, spread: 0.03, range: 1.6, recoil: 2.8 },
   },
 };
 

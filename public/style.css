@@ -160,6 +160,17 @@ body.board-open #menu, body.board-open .deathcard, body.board-open .deploypanel,
 .infotabs button.sel.it { border-bottom-color: #d8c48a; color: #fff; }
 .infotabs button.sel.us { border-bottom-color: #a3b06e; color: #fff; }
 .infotabs button.sel.gb { border-bottom-color: #b8bc8e; color: #fff; }
+/* nation tabs: each name with its emblem, which pops in like the coalition shield (staggered), grows a little on
+   hover / when selected, and pops again when you switch to it */
+.nationtabs button { display: inline-flex; align-items: center; gap: 7px; }
+.nationtabs button canvas { width: 22px; height: 22px; transition: transform .3s; }
+.nationtabs button:hover canvas, .nationtabs button.sel canvas { transform: scale(1.18); }
+#infonation.enter .nationtabs button canvas { animation: heroBadge .5s cubic-bezier(.2,.8,.2,1) backwards; }
+#infonation.enter .nationtabs button:nth-child(1) canvas { animation-delay: .2s; }
+#infonation.enter .nationtabs button:nth-child(2) canvas { animation-delay: .3s; }
+#infonation.enter .nationtabs button:nth-child(3) canvas { animation-delay: .4s; }
+.nationtabs button canvas.pop { animation: heroBadge .45s cubic-bezier(.2,.8,.2,1); }
+@media (prefers-reduced-motion: reduce) { .nationtabs button canvas, .nationtabs button canvas.pop { animation: none !important; } }
 .inforole { color: #a99f78; font-size: 14px; margin-bottom: 4px; }
 .infosec { font-size: 12px; letter-spacing: 3px; text-transform: uppercase; color: #a99f78; border-bottom: 1px solid #3e3a28; margin: 14px 0 6px; padding-bottom: 3px; }
 .rscore.muted { color: #6f6a55; }
@@ -248,6 +259,19 @@ body.end-open .deathcard, body.end-open .deploypanel, body.end-open .mapbar { vi
 .herotag { margin-top: -6px; font-size: clamp(14px, 1.6vw, 18px); letter-spacing: 1px; color: #c9bf98; font-style: italic; }
 .herohalf:hover .herotag { color: #f0e8c8; }
 .infonative { font-size: 16px; letter-spacing: 1.5px; color: #a99f78; font-style: italic; margin: 2px 0 2px; }
+
+/* clicking a coalition: the picked half brightens and zooms toward you as it fades, the other slides off its
+   own side; then the coalition's page fades and scales in, its badge popping in a beat later */
+.infohero.leaving .herohalf { pointer-events: none;
+  transition: transform .38s cubic-bezier(.55,0,.75,.3), opacity .38s ease-in, filter .38s; }
+.infohero.leaving .herohalf.picked { transform: scale(1.14); opacity: 0; filter: brightness(1.5); }
+.infohero.leaving .herohalf.picked::before { opacity: 1; }
+.infohero.leaving .herohalf.axis:not(.picked) { transform: translateX(-35%); opacity: 0; }
+.infohero.leaving .herohalf.allies:not(.picked) { transform: translateX(35%); opacity: 0; }
+#infonation.enter { animation: coalIn .45s cubic-bezier(.2,.8,.2,1) backwards; }
+#infonation.enter #coalbadge { animation: heroBadge .5s cubic-bezier(.2,.8,.2,1) .12s backwards; }
+@keyframes coalIn { from { opacity: 0; transform: scale(.95) translateY(10px); filter: blur(4px); } to { opacity: 1; transform: none; filter: none; } }
+@media (prefers-reduced-motion: reduce) { #infonation.enter, #infonation.enter #coalbadge { animation: none; } }
 
 /* coalition view entrance: halves slide in from their sides, then badge, name, tagline, nations.
    'backwards' fill keeps each piece hidden during its delay but hands control back afterwards (so hover still works). */
@@ -353,3 +377,50 @@ body.board-open .ammobar, body.end-open .ammobar { visibility: hidden; }
 .armortip canvas { width: 220px; height: 180px; display: block; margin: 4px auto 2px; }
 .armortip .atgun { font-size: 12px; color: #a99f78; }
 .armortip .atgun b { color: #e8e0c0; font-weight: 600; }
+
+/* ---- progression (prototype): account level, XP bar, a tech tree line per class ---- */
+.progpanel { width: min(1000px, calc(100vw - 32px)); text-align: left; background: rgba(24,23,17,0.985); }
+#progress { z-index: 12; background: rgba(8,8,5,0.7); }
+.proghead { display: flex; align-items: center; gap: 18px; padding-bottom: 14px; border-bottom: 1px solid rgba(240,232,200,.18); }
+.proglvl, .progfree { display: flex; flex-direction: column; align-items: center; min-width: 84px; }
+.proglvl span, .progfree span { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: #8d8668; }
+.proglvl b { font-size: 40px; line-height: 1; color: #f6e27a; text-shadow: 0 0 12px rgba(246,226,122,.35); }
+.progfree b { font-size: 24px; line-height: 1.2; color: #9fe0a0; }
+.progxp { flex: 1; }
+.progbar { height: 12px; background: rgba(0,0,0,.45); border: 1px solid #5d5639; overflow: hidden; }
+.progbar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #b8902f, #f6e27a); transition: width .4s; }
+.progxptext { margin-top: 5px; font-size: 12px; letter-spacing: 1px; color: #a99f78; }
+.prognations { display: flex; gap: 6px; margin: 14px 0 10px; }
+.pnat { font: inherit; font-size: 14px; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; padding: 6px 16px;
+  background: #1c1b14; color: #a99f78; border: 1px solid #5d5639; }
+.pnat.sel { background: #3a382a; color: #f0e8c8; border-color: #e7dcb1; }
+.ptree { display: flex; flex-direction: column; gap: 10px; max-height: min(60vh, 560px); overflow-y: auto; padding-right: 4px; }
+.prow { display: flex; align-items: center; gap: 6px; }
+.prow > .plbl { width: 112px; flex: none; font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: #d9cf9f; }
+.parrow { color: #5d5639; font-size: 22px; flex: none; }
+.pnode { width: 132px; flex: none; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px 4px 6px;
+  background: #15150f; border: 2px solid #3e3a28; color: #d6cca3; font: inherit; text-align: center; }
+.pnode canvas { width: 84px; height: 63px; }
+.pnode .pname { font-size: 13px; line-height: 1.1; }
+.pnode .pstate { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; line-height: 1.2; min-height: 12px; }
+.pnode.owned { border-color: #b8902f; background: #24221a; }
+.pnode.owned .pstate { color: #f6e27a; }
+.pnode.next { border-color: #7fd46a; cursor: pointer; }
+.pnode.next:hover { background: #22281a; }
+.pnode.next .pstate { color: #9fe0a0; }
+.pnode.short { border-style: dashed; }
+.pnode.short .pstate { color: #e0573f; }
+.pnode.locked { opacity: .45; }
+.pnode.locked .pstate { color: #8d8668; }
+.pnode.flash { animation: pflash .6s ease-out; }
+@keyframes pflash { 0% { box-shadow: 0 0 0 0 rgba(246,226,122,.9); } 100% { box-shadow: 0 0 0 14px rgba(246,226,122,0); } }
+.progfoot { display: flex; align-items: center; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(240,232,200,.18); }
+.progfoot .proto { flex: 1; font-size: 11px; letter-spacing: 1px; color: #8d8668; }
+.btn.psmall { font-size: 13px; padding: 5px 12px; letter-spacing: 2px; }
+
+/* switching nation tabs (nation info, progression): content slides out the way you're moving, the new nation
+   slides in from the other side; --dir is +1 (to a tab further right) or -1 */
+.swapout { transition: transform .16s cubic-bezier(.3,0,.7,1), opacity .16s linear; transform: translateX(calc(var(--dir, 1) * -40px)); opacity: 0; }
+.swapin { animation: swapIn .28s cubic-bezier(.2,.8,.2,1); }
+@keyframes swapIn { from { transform: translateX(calc(var(--dir, 1) * 40px)); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .swapout { transition: none; transform: none; opacity: 1; } .swapin { animation: none; } }

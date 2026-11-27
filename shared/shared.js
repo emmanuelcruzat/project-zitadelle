@@ -39,7 +39,8 @@ const enemyOf = t => (t === 'de' ? 'su' : 'de');
 // the defender wins when both lines are defeated. A side that has used up all its reserves and has no
 // vehicles left on the field also loses.
 const ATTACKER = 'de', DEFENDER = 'su';
-const CAP_R = 400;                 // capture zone radius
+const CAP_R = 400;                 // capture zone radius (each point's own is p.r)
+const O1_R = 600, O1_CAP = 2;      // Prokhorovka: a bigger zone that takes O1_CAP times as long to capture
 const LINES = ['A', 'B'];
 const OBJ = { x: 6300, y: 1700 };  // O1, Prokhorovka
 const LINE_START = { A: { x: 900, y: 4400 }, B: { x: 3600, y: 7100 } };
@@ -55,11 +56,11 @@ for (const L of LINES) {
   const px = -dy / len * LINE_BOW[L], py = dx / len * LINE_BOW[L];   // perpendicular, bowing outward
   LINE_T.forEach((t, k) => {
     const bow = 650 * Math.sin(Math.PI * t);
-    CAP_POINTS.push({ id: L + (5 - k), name: LINE_NAMES[L][k], line: L, k,
+    CAP_POINTS.push({ id: L + (5 - k), name: LINE_NAMES[L][k], line: L, k, r: CAP_R, capScale: 1,
       x: Math.round(s.x + dx * t + px * bow), y: Math.round(s.y + dy * t + py * bow) });
   });
 }
-CAP_POINTS.push({ id: 'O1', name: 'Prokhorovka', line: null, k: 5, x: OBJ.x, y: OBJ.y });
+CAP_POINTS.push({ id: 'O1', name: 'Prokhorovka', line: null, k: 5, x: OBJ.x, y: OBJ.y, r: O1_R, capScale: O1_CAP });
 const O_IDX = CAP_POINTS.length - 1;
 // neighbours: prev = toward the attacker's start, next = toward O1
 CAP_POINTS.forEach((p, i) => {
@@ -184,6 +185,8 @@ def('stug', { name: 'StuG III', tier: 1, style: 'casemate', hull: [2.1, 1.6], ca
 def('jgpz4', { name: 'Jagdpanzer IV', tier: 2, style: 'casemate', hull: [2.15, 1.6], caseX: 0, caseW: 1.4,
   guns: [G({ len: 2.3, w: 0.24 })],
   desc: 'Low-slung tank destroyer with the long 75mm.' });
+def('nashorn', { name: 'Nashorn', style: 'casemate', hull: [2.45, 1.6], size: 1.05, caseX: -0.25, caseW: 1.3, guns: [G({ len: 2.6, w: 0.27, brake: true })],
+  desc: "Open-topped 88mm tank destroyer. Deadly at range, paper-thin armour." });
 def('sdkfz', { name: 'Sd.Kfz. 251', tier: 1, style: 'halftrack', hull: [2.2, 1.3], turret: 0.3, turretShape: 'pintle',
   turretX: 0.15,
   guns: twin(0.1, { len: 1.25, w: 0.13, kind: 'mg' }), desc: 'Fast halftrack with twin MG 42s.' });
@@ -287,6 +290,21 @@ def('sem7518', { name: 'Semovente da 75/18', tier: 1, style: 'casemate', hull: [
   guns: [G({ len: 1.1, w: 0.3 })],
   desc: 'Low assault gun with a short 75mm howitzer.' });
 
+def('m1139', { name: 'M11/39', hull: [1.85, 1.35], size: 0.88, turretShape: 'box', turret: 0.42, turretX: 0.05, guns: [G({ len: 1.0, w: 0.17 })],
+  desc: "Early Italian tank with a hull-mounted 37mm gun." });
+def('m1441', { name: 'M14/41', hull: [1.95, 1.42], size: 0.93, turretShape: 'box', turret: 0.52, turretX: 0.05, guns: [G({ len: 1.4, w: 0.2 })],
+  desc: "Improved M13/40 with a stronger engine and dust filters." });
+def('m1542', { name: 'M15/42', hull: [2.0, 1.45], size: 0.95, turretShape: 'box', turret: 0.54, turretX: 0.05, guns: [G({ len: 1.6, w: 0.21 })],
+  desc: "Last of the Italian M-series, with a longer 47mm gun." });
+def('sem4732', { name: 'Semovente da 47/32', style: 'casemate', hull: [1.75, 1.35], size: 0.85, caseX: -0.05, caseW: 0.9, guns: [G({ len: 1.25, w: 0.18 })],
+  desc: "Small open-topped 47mm tank destroyer on the L6/40 chassis." });
+def('sem7534', { name: 'Semovente da 75/34', style: 'casemate', hull: [1.95, 1.45], size: 0.92, caseX: 0, caseW: 1.15, guns: [G({ len: 1.5, w: 0.27 })],
+  desc: "Assault gun with the longer 75/34 gun." });
+def('sem10525', { name: 'Semovente da 105/25', style: 'casemate', hull: [2.05, 1.55], caseX: 0.05, caseW: 1.3, guns: [G({ len: 1.2, w: 0.4, size: 1.05 })],
+  desc: "'Bassotto': a low, heavy 105mm assault gun." });
+def('sem9053', { name: 'Semovente da 90/53', style: 'casemate', hull: [2.1, 1.5], caseX: -0.3, caseW: 1.1, guns: [G({ len: 2.5, w: 0.26, brake: true })],
+  desc: "90mm anti-aircraft gun turned tank killer, fully exposed crew." });
+
 // ---- United States (not playable yet) ----
 FACTION = 'us';
 def('m3stuart', { name: 'M3 Stuart', tier: 0, hull: [1.85, 1.45], size: 0.9, turretShape: 'round', turret: 0.5, turretX: 0.02,
@@ -302,6 +320,23 @@ def('m10', { name: 'M10 Wolverine', tier: 2, hull: [2.15, 1.65], turretShape: 'o
   guns: [G({ len: 2.0, w: 0.25 })],
   desc: 'Open-topped tank destroyer with a 3-inch gun.' });
 
+def('m5stuart', { name: 'M5 Stuart', hull: [1.9, 1.45], size: 0.9, turretShape: 'round', turret: 0.5, turretX: 0.02, guns: [G({ len: 1.3, w: 0.18 })],
+  desc: "Fast, reliable 37mm light tank with twin Cadillac engines." });
+def('m24', { name: 'M24 Chaffee', hull: [2.05, 1.5], size: 0.95, turretShape: 'round', turret: 0.56, turretX: 0.05, guns: [G({ len: 1.55, w: 0.24 })],
+  desc: "Light tank with a 75mm gun and torsion-bar suspension." });
+def('m4a1_76', { name: 'M4A1 Sherman (76)', hull: [2.15, 1.6], turretShape: 'round', turret: 0.64, turretX: 0.05, guns: [G({ len: 2.0, w: 0.25 })],
+  desc: "Sherman with the long 76mm gun in a bigger turret." });
+def('m4a3e8', { name: 'M4A3E8 Sherman', hull: [2.2, 1.65], turretShape: 'round', turret: 0.65, turretX: 0.05, guns: [G({ len: 2.05, w: 0.25, brake: true })],
+  desc: "'Easy Eight': the 76mm Sherman on a smoother, wider-tracked suspension." });
+def('m18', { name: 'M18 Hellcat', hull: [2.05, 1.5], turretShape: 'open', turret: 0.58, guns: [G({ len: 2.0, w: 0.24, brake: true })],
+  desc: "The fastest tracked vehicle of the war, with a 76mm gun." });
+def('m36', { name: 'M36 Jackson', hull: [2.15, 1.65], turretShape: 'open', turret: 0.66, guns: [G({ len: 2.4, w: 0.28, brake: true })],
+  desc: "90mm tank destroyer, the most powerful US gun in Europe until 1945." });
+def('m4a3e2', { name: 'M4A3E2 Jumbo', hull: [2.2, 1.7], size: 1.05, turretShape: 'round', turret: 0.68, turretX: 0.05, guns: [G({ len: 1.5, w: 0.28 })],
+  desc: "Up-armoured assault Sherman. Leads the column and soaks the hits." });
+def('t28gmc', { name: 'T28 GMC', style: 'casemate', hull: [2.9, 2.0], size: 1.25, caseX: -0.05, caseW: 1.6, guns: [G({ len: 2.3, w: 0.32, brake: true })],
+  desc: "Super-heavy 105mm assault gun built to break the Siegfried Line." });
+
 // ---- United Kingdom (not playable yet) ----
 FACTION = 'gb';
 def('tetrarch', { name: 'Tetrarch', tier: 0, hull: [1.75, 1.35], size: 0.86, turretShape: 'box', turret: 0.46,
@@ -310,6 +345,9 @@ def('tetrarch', { name: 'Tetrarch', tier: 0, hull: [1.75, 1.35], size: 0.86, tur
 def('cromwell', { name: 'Cromwell', tier: 2, hull: [2.15, 1.6], turretShape: 'box', turret: 0.62, turretX: 0.02,
   guns: [G({ len: 1.55, w: 0.27 })],
   desc: 'Fast cruiser tank with a 75mm gun.' });
+def('matilda2', { name: 'Matilda II', hull: [2.15, 1.6], turretShape: 'round', turret: 0.55, turretX: 0.05,
+  guns: [G({ len: 1.25, w: 0.17 })],
+  desc: 'Slow early-war infantry tank, armoured beyond what most 1940 guns could pierce.' });
 def('churchill', { name: 'Churchill VII', tier: 2, hull: [2.6, 1.7], size: 1.12, turretShape: 'box', turret: 0.62, turretX: 0.12,
   guns: [G({ len: 1.5, w: 0.28 })],
   desc: 'Slow, very heavily armoured infantry tank.' });
@@ -317,6 +355,16 @@ def('achilles', { name: 'Achilles', tier: 3, hull: [2.15, 1.65], turretShape: 'o
   guns: [G({ len: 2.5, w: 0.26, brake: true })],
   desc: 'The M10 rebuilt with the British 17-pounder.' });
 
+def('crusader3', { name: 'Crusader III', hull: [2.3, 1.5], turretShape: 'box', turret: 0.56, turretX: 0.05, guns: [G({ len: 1.6, w: 0.22 })],
+  desc: "Fast cruiser tank with the 6-pounder gun." });
+def('firefly', { name: 'Sherman Firefly', hull: [2.15, 1.6], turretShape: 'round', turret: 0.64, turretX: 0.05, guns: [G({ len: 2.55, w: 0.25, brake: true })],
+  desc: "A Sherman with the 17-pounder: the Allied answer to the Tiger." });
+def('comet', { name: 'Comet', hull: [2.3, 1.65], turretShape: 'box', turret: 0.64, turretX: 0.02, guns: [G({ len: 2.25, w: 0.25, brake: true })],
+  desc: "Fast cruiser tank with the 77mm high-velocity gun." });
+def('archer', { name: 'Archer', style: 'casemate', hull: [1.95, 1.45], caseX: -0.1, caseW: 1.0, guns: [G({ len: 2.5, w: 0.25, brake: true })],
+  desc: "Low 17-pounder tank destroyer on the Valentine chassis." });
+def('tortoise', { name: 'Tortoise', style: 'casemate', hull: [2.95, 2.0], size: 1.25, caseX: -0.05, caseW: 1.7, guns: [G({ len: 2.4, w: 0.34, brake: true })],
+  desc: "Super-heavy assault tank with the 32-pounder." });
 const START_CLASS = { de: 'pz3', su: 't34' };
 const CLASS_IDS = Object.keys(CLASSES);
 CLASS_IDS.forEach((id, i) => { CLASSES[id].idx = i; });
@@ -359,6 +407,18 @@ const MG_FIT = {
   achilles:    c => [ROOF('m2hb', -0.4, 0)],
   cromwell:    c => [BOW('besa', c)],
   churchill:   c => [BOW('besa', c)],
+  m1139:       c => [BOW('breda38', c)],
+  m1441:       c => [BOW('breda38', c)],
+  m1542:       c => [BOW('breda38', c)],
+  m5stuart:    c => [BOW('m1919', c)],
+  m24:         c => [BOW('m1919', c), ROOF('m2hb', -0.3, 0.3)],
+  m4a1_76:     c => [BOW('m1919', c), ROOF('m2hb', -0.3, 0.32)],
+  m4a3e8:      c => [BOW('m1919', c), ROOF('m2hb', -0.3, 0.32)],
+  m18:         c => [ROOF('m2hb', -0.4, 0)],
+  m36:         c => [ROOF('m2hb', -0.4, 0)],
+  m4a3e2:      c => [BOW('m1919', c), ROOF('m2hb', -0.32, 0.34)],
+  comet:       c => [BOW('besa', c)],
+  tortoise:    c => [BOW('besa', c)],
 };
 for (const id in MG_FIT) CLASSES[id].mgs = MG_FIT[id](CLASSES[id]).map(m => Object.assign({}, ARMOR.MGS[m.t], m));
 // short card/HUD description, e.g. "Bow MG 34, roof MG 34"
@@ -549,7 +609,8 @@ const ROLE = {
   wirbelwind: 6, kugelblitz: 6, zsu37: 6, m17: 6, sdkfz: 7,
   stukafuss: 8, panzerwerfer: 8, katyusha: 8, bm31: 8,
   l640: 0, m3stuart: 0, tetrarch: 0, m1340: 1, m4sherman: 1, cromwell: 1,
-  p2640: 2, m26: 2, churchill: 2, m10: 3, achilles: 3, sem7518: 4,
+  p2640: 2, m26: 2, churchill: 2, matilda2: 2, m10: 3, achilles: 3, sem7518: 4,
+  nashorn: 3, m1139: 0, m1441: 1, m1542: 1, sem4732: 3, sem7534: 4, sem10525: 4, sem9053: 3, m5stuart: 0, m24: 0, m4a1_76: 1, m4a3e8: 1, m18: 3, m36: 3, m4a3e2: 2, t28gmc: 3, crusader3: 1, firefly: 1, comet: 1, archer: 3, tortoise: 3,
 };
 for (const id of CLASS_IDS) { CLASSES[id].roleIdx = ROLE[id]; CLASSES[id].role = ROLES[ROLE[id]]; }
 // reserve category (index into CATS)
@@ -561,8 +622,9 @@ const CAT = {
   ferdinand: 4, jagdpanther: 4, brummbaer: 4, jagdtiger: 4, su122: 4, su152: 4, isu152: 4, su100: 4,
   l640: 0, m3stuart: 0, tetrarch: 0,
   m1340: 1, m4sherman: 1, cromwell: 1,
-  p2640: 2, m26: 2, churchill: 2,
+  p2640: 2, m26: 2, churchill: 2, matilda2: 2,
   sem7518: 3, m10: 3, achilles: 3,
+  nashorn: 3, m1139: 0, m1441: 1, m1542: 1, sem4732: 3, sem7534: 3, sem10525: 4, sem9053: 4, m5stuart: 0, m24: 0, m4a1_76: 1, m4a3e8: 1, m18: 3, m36: 4, m4a3e2: 2, t28gmc: 4, crusader3: 1, firefly: 1, comet: 1, archer: 3, tortoise: 4,
 };
 for (const id of CLASS_IDS) CLASSES[id].cat = CAT[id] !== undefined ? CAT[id] : -1;
 // For now only gun vehicles are in play: anything whose main armament is all MGs / autocannon or rockets

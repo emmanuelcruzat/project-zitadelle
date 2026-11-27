@@ -249,6 +249,58 @@ const Sound = (() => {
   };
   api.tick = () => { budget = 0; };
 
+  // ---- coalition hum (nation info screen): a low, slowly breathing drone, different for each side.
+  // Axis: dark and ominous, detuned sawtooths on a low E with its fifth and a faint minor third through a
+  // resonant, slowly sweeping low-pass, over a sub rumble. Allies: a plain, steady, friendly chord: C major
+  // (C, E, G and the octave over a soft low C) on clean sine waves, no detune or filter sweep, only a very slow,
+  // gentle swell. ----
+  let hum = null;
+  api.hum = kind => {
+    if (!ac) return;
+    if (ac.state === 'suspended') ac.resume();
+    if (hum && hum.kind === kind) return;
+    api.humStop();
+    const axis = kind === 'Axis', t = ac.currentTime, srcs = [];
+    const out = ac.createGain();
+    out.gain.setValueAtTime(0, t); out.gain.linearRampToValueAtTime(axis ? 0.08 : 0.06, t + 1.4);
+    out.connect(master);
+    const send = ac.createGain(); send.gain.value = 0.45; out.connect(send); send.connect(verbIn);
+    // breathing: a slow swell on the level
+    const breath = ac.createGain(); breath.gain.value = 0.8; breath.connect(out);
+    const bl = ac.createOscillator(), blg = ac.createGain();
+    bl.frequency.value = axis ? 0.12 : 0.08; blg.gain.value = axis ? 0.2 : 0.08; bl.connect(blg); blg.connect(breath.gain); srcs.push(bl);
+    // the filter slowly opens and closes
+    const lp = ac.createBiquadFilter(); lp.type = 'lowpass';
+    lp.frequency.value = axis ? 170 : 2000; lp.Q.value = axis ? 7 : 0.5; lp.connect(breath);
+    if (axis) {   // the Axis filter slowly opens and closes; the Allies one stays put
+      const fl = ac.createOscillator(), flg = ac.createGain();
+      fl.frequency.value = 0.07; flg.gain.value = 75; fl.connect(flg); flg.connect(lp.frequency); srcs.push(fl);
+    }
+    const notes = axis
+      ? [[41.2, 'sawtooth', 0.5], [41.55, 'sawtooth', 0.42], [61.74, 'sawtooth', 0.26], [49.0, 'triangle', 0.2]]
+      : [[65.41, 'sine', 0.22], [130.81, 'sine', 0.3], [164.81, 'sine', 0.24], [196.0, 'sine', 0.22], [261.63, 'sine', 0.14]];
+    for (const [f, type, v] of notes) {
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.type = type; o.frequency.value = f; g.gain.value = v;
+      o.connect(g); g.connect(lp); srcs.push(o);
+    }
+    if (axis && noise) {   // a sub rumble under the Axis drone
+      const n = ac.createBufferSource(), nf = ac.createBiquadFilter(), ng = ac.createGain();
+      n.buffer = noise; n.loop = true; nf.type = 'lowpass'; nf.frequency.value = 85; ng.gain.value = 0.5;
+      n.connect(nf); nf.connect(ng); ng.connect(breath); srcs.push(n);
+    }
+    for (const n of srcs) n.start(t);
+    hum = { kind, out, srcs };
+  };
+  api.humStop = () => {
+    if (!hum || !ac) { hum = null; return; }
+    const h = hum, t = ac.currentTime;
+    hum = null;
+    h.out.gain.cancelScheduledValues(t); h.out.gain.setValueAtTime(h.out.gain.value, t);
+    h.out.gain.linearRampToValueAtTime(0, t + 0.9);
+    for (const n of h.srcs) n.stop(t + 1);
+  };
+
   // ---- voice building blocks ----
   function voice(vol, dn, delay) {
     const t = ac.currentTime + 0.005 + delay;
@@ -560,6 +612,7 @@ function onMessage(m) {
   else offset += (sample - offset) * (sample > offset ? 0.2 : 0.02);
 
   you = m.you || null;
+  progTrackScore(you);
   // promotion: rank went up on the same side (it drops back when a new battle resets scores — no popup then)
   if (you && promo.lastRank != null && you.team === promo.lastTeam && you.rank > promo.lastRank) promoted(you.team, you.rank);
   promo.lastRank = you ? you.rank : null; promo.lastTeam = you ? you.team : null;
@@ -1578,22 +1631,22 @@ function drawPoints() {
   const c = ctx;
   drawRoute(c, 1, 0, 0, 10);
   CAP_POINTS.forEach((p, i) => {
-    if (!inView(p.x, p.y, CAP_R + 120)) return;
+    if (!inView(p.x, p.y, p.r + 120)) return;
     const [prog, ow, contested, active] = cps[i] || [0, 0, 0, 0];
     const owner = OWNER[ow], col = ptColor(owner);
     const [cr, cg, cb] = hexRgb(col);
     c.fillStyle = `rgba(${cr},${cg},${cb},${active ? 0.16 : 0.06})`;
-    c.beginPath(); c.arc(p.x, p.y, CAP_R, 0, TAU); c.fill();
+    c.beginPath(); c.arc(p.x, p.y, p.r, 0, TAU); c.fill();
     // dashed perimeter (marching while contested); locked points get a faint solid ring and a padlock
     c.strokeStyle = contested ? `rgba(230,80,50,${0.55 + 0.35 * Math.sin(now * 8)})` : `rgba(${cr},${cg},${cb},${active ? 0.85 : 0.35})`;
     c.lineWidth = active ? 5 : 3; c.setLineDash(active ? [26, 16] : []); c.lineDashOffset = contested ? -now * 60 : 0;
-    c.beginPath(); c.arc(p.x, p.y, CAP_R, 0, TAU); c.stroke();
-    if (!active) drawLock(c, p.x, p.y - CAP_R * 0.55, 26, `rgba(${cr * 0.4 | 0},${cg * 0.4 | 0},${cb * 0.4 | 0},0.4)`);
+    c.beginPath(); c.arc(p.x, p.y, p.r, 0, TAU); c.stroke();
+    if (!active) drawLock(c, p.x, p.y - p.r * 0.55, 26, `rgba(${cr * 0.4 | 0},${cg * 0.4 | 0},${cb * 0.4 | 0},0.4)`);
     c.setLineDash([]); c.lineDashOffset = 0;
     // capture progress arc, drawn in the colour of whoever the needle leans toward
     if (Math.abs(prog) > 0.01 && Math.abs(prog) < 0.999) {
       c.strokeStyle = ptColor(prog > 0 ? 'de' : 'su'); c.lineWidth = 12;
-      c.beginPath(); c.arc(p.x, p.y, CAP_R - 14, -Math.PI / 2, -Math.PI / 2 + TAU * Math.abs(prog)); c.stroke();
+      c.beginPath(); c.arc(p.x, p.y, p.r - 14, -Math.PI / 2, -Math.PI / 2 + TAU * Math.abs(prog)); c.stroke();
     }
     // letter + name painted on the ground
     c.textAlign = 'center'; c.textBaseline = 'middle';
@@ -1601,7 +1654,7 @@ function drawPoints() {
     c.font = '600 150px Oswald, Impact, sans-serif';
     c.fillText(p.id, p.x, p.y + 6);
     c.font = '600 30px Oswald, Impact, sans-serif';
-    c.fillText(p.name.toUpperCase(), p.x, p.y + CAP_R * 0.62);
+    c.fillText(p.name.toUpperCase(), p.x, p.y + p.r * 0.62);
     // flagpole with a waving banner
     const fx = p.x + 70, fy = p.y - 60;
     c.strokeStyle = '#3a352a'; c.lineWidth = 4;
@@ -2335,7 +2388,7 @@ function drawHUD() {
     const me = myTank();
     // ---- capture status while standing in a zone ----
     if (me) {
-      const i = CAP_POINTS.findIndex(p => Math.hypot(me.x - p.x, me.y - p.y) < CAP_R);
+      const i = CAP_POINTS.findIndex(p => Math.hypot(me.x - p.x, me.y - p.y) < p.r);
       if (i >= 0) {
         const p = CAP_POINTS[i], [prog, ow, contested, active] = cps[i], owner = OWNER[ow];
         const mine = you.team === 'de' ? prog : -prog;       // -1 enemy .. +1 ours
@@ -2467,11 +2520,11 @@ function drawMinimap() {
     const owner = OWNER[(cps[i] || [])[1]];
     ctx.globalAlpha = MA * (cps[i] && cps[i][3] ? 0.95 : 0.45);
     ctx.fillStyle = owner ? ptColor(owner) : '#6d6a55';
-    ctx.beginPath(); ctx.arc(x + p.x * k, y + p.y * k, Math.max(6, CAP_R * k), 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + p.x * k, y + p.y * k, Math.max(6, p.r * k), 0, TAU); ctx.fill();
     ctx.globalAlpha = MA;
     if (cps[i] && cps[i][2]) {
       ctx.strokeStyle = `rgba(255,90,60,${0.5 + 0.5 * Math.sin(now * 10)})`; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(x + p.x * k, y + p.y * k, Math.max(6, CAP_R * k) + 2, 0, TAU); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x + p.x * k, y + p.y * k, Math.max(6, p.r * k) + 2, 0, TAU); ctx.stroke();
     }
     hudText(p.id, x + p.x * k, y + p.y * k + 0.5, 10, '#fff', 'center', 600);
   });
@@ -2591,9 +2644,9 @@ function spawnOptions() {
     if (p.line && isLineDead(p.line)) why = 'line defeated';
     else if (owner !== playerTeam) why = owner ? 'enemy held' : 'not held';
     else if (c[2]) why = 'contested';
-    else if (vTanks.some(t => t.team !== playerTeam && Math.hypot(t.x - p.x, t.y - p.y) < CAP_R + 300)) why = 'enemies nearby';
+    else if (vTanks.some(t => t.team !== playerTeam && Math.hypot(t.x - p.x, t.y - p.y) < p.r + 300)) why = 'enemies nearby';
     else if (!poolArr(playerTeam, i).some(n => n > 0)) why = 'out of reserves';
-    out.push({ code: i, x: p.x, y: p.y, r: CAP_R, id: p.id, name: p.name, owner, ok: !why, why });
+    out.push({ code: i, x: p.x, y: p.y, r: p.r, id: p.id, name: p.name, owner, ok: !why, why });
   });
   return out;
 }
@@ -2916,8 +2969,30 @@ const VEHICLE_HISTORY = {
   m10: 'Tank destroyer on the Sherman chassis with a 3-inch gun in an open-topped turret, in service from 1942. It traded armour for speed and a powerful gun.',
   tetrarch: 'Light tank with a 2-pounder gun, later adapted to be carried into battle by glider. Tetrarchs landed with British airborne troops in Normandy in June 1944.',
   cromwell: 'Fast British cruiser tank with a 75mm gun, in service from 1944. Its Meteor engine, derived from the Spitfire\'s Merlin, made it one of the fastest tanks of the war.',
+  matilda2: "The 'Queen of the Desert': a slow infantry tank with up to 78mm of armour that almost no German or Italian anti-tank gun could stop in 1940-41, until the 88mm was turned on it. Its 2-pounder had no high-explosive shell. Over a thousand went to the Soviet Union under Lend-Lease.",
   churchill: 'Heavily armoured infantry tank built to climb rough ground and obstacles; the Mark VII had up to 152mm of frontal armour. Churchills sent to the Soviet Union fought at Kursk.',
   achilles: 'The British conversion of the American M10 with the 17-pounder, one of the few Allied guns that could defeat the Tiger and Panther from the front at range.',
+  nashorn: "The 'Rhinoceros': the long 88mm PaK 43 on a Panzer III/IV chassis with a thin, open-topped fighting compartment. First used in battle at Kursk, it could kill any Soviet tank from well beyond their reach, but had to stay out of return fire.",
+  m1139: "Italy's first medium tank, with its 37mm gun in the hull and only machine guns in the small turret. Outclassed in North Africa within months of its arrival in 1940; most were lost by early 1941.",
+  m1441: "The M13/40 with a more powerful diesel engine and desert air filters. Italy's most numerous tank, the backbone of its armoured divisions in North Africa through 1942.",
+  m1542: "A lengthened M14/41 with a petrol engine and the longer 47/40 gun. Built in 1943 just before the armistice; many were taken over by the Germans.",
+  sem4732: "The 47/32 anti-tank gun in an open box on the L6/40 light tank chassis. Used in North Africa and on the Eastern Front, including by Italian units on the Don in 1942.",
+  sem7534: "The Semovente 75/18 rearmed with the higher-velocity 75/34 gun, giving Italy a self-propelled gun that could fight Allied tanks rather than only support infantry.",
+  sem10525: "Nicknamed 'Bassotto' (dachshund) for its low, wide build. A powerful 105mm assault gun on the M43 chassis, mostly completed after the armistice and used by German units in Italy.",
+  sem9053: "The powerful 90/53 anti-aircraft gun mounted at the back of an M14/41 chassis, with almost no protection for the crew. Only 30 were built, and they fought in Sicily in 1943.",
+  m5stuart: "The M3 Stuart redesigned around two Cadillac car engines and an automatic gearbox, with a sloped front. Quick and dependable; by 1944 its 37mm gun was only good for scouting.",
+  m24: "The Stuart's replacement from late 1944: a lightweight 75mm gun, wide tracks and torsion-bar suspension. One of the best light tanks of the war, still in service decades later.",
+  m4a1_76: "The cast-hull Sherman with the T23 turret and the 76mm M1 gun, from 1944. Better against armour than the 75mm, though its HE shell was weaker.",
+  m4a3e8: "'Easy Eight': the late-war Sherman with horizontal volute spring suspension and wide tracks, a Ford V8 and the muzzle-braked 76mm gun. Arrived in Europe at the turn of 1945.",
+  m18: "A purpose-built tank destroyer that could top 80 km/h, trading armour for speed under the US 'seek, strike and destroy' doctrine. It had the highest kill ratio of any US armoured vehicle.",
+  m36: "The M10 hull with a new open-topped turret carrying the 90mm M3 gun. From late 1944 it was the only US vehicle that could reliably defeat a Panther from the front.",
+  m4a3e2: "An assault Sherman with extra armour welded on and a thick new turret, built in 1944 to lead breakthroughs. Only 254 were made, and they were prized by the crews who had them.",
+  t28gmc: "A 95-tonne casemate gun with 305mm of frontal armour and a 105mm gun, designed to crack the Siegfried Line. The two prototypes were finished after the war in Europe had ended.",
+  crusader3: "The Crusader cruiser tank rearmed with the 6-pounder in a cramped two-man turret. Fast on the desert and fought at El Alamein in 1942, but unreliable in service.",
+  firefly: "A British conversion that squeezed the 17-pounder into the Sherman's turret. Usually one per troop of four in Normandy, it was the one tank German crews tried to knock out first.",
+  comet: "Developed from the Cromwell, with a shortened 17-pounder (the 77mm HV) in a new turret. In service from early 1945 and one of the best British tanks of the war.",
+  archer: "The 17-pounder mounted facing backwards over the Valentine's engine deck, which kept the vehicle short and low. Crews fired from ambush, then simply drove off forwards.",
+  tortoise: "A 78-tonne assault gun with 228mm of armour and the 32-pounder, designed to break the Siegfried Line. Six were built after the war and only ever tested.",
 };
 function placeInfoTip(x, y) {
   const t = ui.infotip, w = t.offsetWidth, h = t.offsetHeight;
@@ -2928,8 +3003,10 @@ const infoOpen = () => !ui.info.classList.contains('hidden');
 // opens on the two coalitions; clicking one shows its nations (your own side's coalition opens on your nation)
 const COALITION_ORDER = { Axis: ['de', 'it'], Allies: ['su', 'us', 'gb'] };
 const heroOpen = () => !document.getElementById('infohero').classList.contains('hidden');
-function openInfo() { ui.info.classList.remove('hidden'); showHero(); }
-function closeInfo() { ui.info.classList.add('hidden'); ui.infotip.classList.add('hidden'); }
+// (opened by a click, so audio can start here: browsers only allow it after a user gesture, and the coalition
+// hums play on hover)
+function openInfo() { Sound.init(); ui.info.classList.remove('hidden'); showHero(); }
+function closeInfo() { Sound.humStop(); ui.info.classList.add('hidden'); ui.infotip.classList.add('hidden'); }
 function showHero() {
   const hero = document.getElementById('infohero');
   hero.classList.remove('hidden');
@@ -2938,18 +3015,67 @@ function showHero() {
   // replay the entrance animation every time
   hero.classList.remove('enter'); void hero.offsetWidth; hero.classList.add('enter');
 }
+// Clicking a coalition: the picked half lights up and zooms toward you while the other slides off its side,
+// then the coalition's page fades and scales in (instant when the system asks for reduced motion).
+const COAL_LEAVE_MS = 380;
+let coalLeaving = false;
 function openCoalition(coal) {
+  const hero = document.getElementById('infohero');
+  if (coalLeaving) return;
+  Sound.humStop();
+  if (hero.classList.contains('hidden') || matchMedia('(prefers-reduced-motion: reduce)').matches) { showCoalition(coal); return; }
+  coalLeaving = true;
+  hero.querySelectorAll('.herohalf').forEach(b => b.classList.toggle('picked', b.dataset.coal === coal));
+  hero.classList.remove('enter'); hero.classList.add('leaving');
+  setTimeout(() => {
+    coalLeaving = false;
+    hero.classList.remove('leaving');
+    hero.querySelectorAll('.herohalf').forEach(b => b.classList.remove('picked'));
+    showCoalition(coal);
+  }, COAL_LEAVE_MS);
+}
+// Switching nation tabs: the current content slides out the way you're moving and the new nation slides in
+// from the other side (dir +1 = to a tab further right, -1 = back). Instant with reduced motion.
+function swapContent(el, dir, render) {
+  if (!dir || matchMedia('(prefers-reduced-motion: reduce)').matches) { render(); return; }
+  clearTimeout(el._swapT);
+  el.style.setProperty('--dir', dir);
+  el.classList.remove('swapin'); el.classList.add('swapout');
+  el._swapT = setTimeout(() => {
+    el.classList.remove('swapout');
+    render(); el.scrollTop = 0;
+    void el.offsetWidth; el.classList.add('swapin');
+  }, 160);
+}
+let infoTeam = null;
+function showCoalition(coal) {
   document.getElementById('infohero').classList.add('hidden');
-  document.getElementById('infonation').classList.remove('hidden');
+  const page = document.getElementById('infonation');
+  page.classList.remove('hidden');
+  page.classList.remove('enter'); void page.offsetWidth; page.classList.add('enter');
   const cv = document.getElementById('coalbadge');
   drawCoalitionBadge(cv.getContext('2d'), coal, cv.width, cv.height);
   document.getElementById('coalname').textContent = coal;
   const tabs = document.getElementById('nationtabs'), list = COALITION_ORDER[coal];
-  tabs.innerHTML = list.map(t => `<button class="${t}" data-team="${t}">${escapeHtml(TEAMS[t].name)}</button>`).join('');
-  tabs.querySelectorAll('button').forEach(b => b.addEventListener('click', () => showInfo(b.dataset.team)));
+  // each tab: the nation's emblem (popping in like the coalition shield) and its name
+  tabs.innerHTML = list.map(t => `<button class="${t}" data-team="${t}"><canvas width="48" height="48"></canvas><span>${escapeHtml(TEAMS[t].name)}</span></button>`).join('');
+  tabs.querySelectorAll('button').forEach(b => {
+    const cv = b.querySelector('canvas'), c = cv.getContext('2d');
+    c.clearRect(0, 0, cv.width, cv.height); c.save(); c.translate(cv.width / 2, cv.height / 2);
+    drawFactionMark(c, b.dataset.team, cv.width * 0.36); c.restore();
+  });
+  tabs.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+    const to = b.dataset.team;
+    if (to === infoTeam) return;
+    const dir = Math.sign(list.indexOf(to) - list.indexOf(infoTeam)) || 1;
+    tabs.querySelectorAll('button').forEach(x => x.classList.toggle('sel', x.dataset.team === to));   // tab lights at once
+    const mk = b.querySelector('canvas'); mk.classList.remove('pop'); void mk.offsetWidth; mk.classList.add('pop');   // its emblem pops
+    swapContent(document.getElementById('infobody'), dir, () => showInfo(to));
+  }));
   showInfo(list.includes(playerTeam) ? playerTeam : list[0]);
 }
 function showInfo(team) {
+  infoTeam = team;
   document.querySelectorAll('#nationtabs button').forEach(b => b.classList.toggle('sel', b.dataset.team === team));
   const body = document.getElementById('infobody');
   const F = FACTION_INFO[team];
@@ -3350,6 +3476,112 @@ factionBtns.forEach(b => {
   drawFactionMark(c, b.dataset.team, Math.min(cv.width, cv.height) * 0.36);
   c.restore();
 });
+// =====================================================================
+// Progression (prototype): account level and a tech tree of vehicles to unlock, per nation. Every point of
+// battle score you earn becomes account XP; total XP sets your level, and unspent XP buys the next vehicle
+// in a line. Saved in this browser only, and it doesn't lock anything in battle yet.
+// =====================================================================
+// one line per reserve class: [vehicle id, XP to unlock]; 0 = a free starter. Each needs the one before it.
+const TECH_TREE = {
+  de: {
+    lt: [['pz2c', 0], ['pz38t', 800], ['luchs', 1500]],
+    mt: [['pz3', 0], ['pz4', 1500], ['panther', 4000]],
+    td: [['hetzer', 0], ['stug', 1500], ['jgpz4', 3000], ['nashorn', 4500]],
+    ht: [['tiger', 3500], ['tiger2', 8000]],
+    htd: [['brummbaer', 3000], ['jagdpanther', 5000], ['ferdinand', 7000], ['jagdtiger', 10000]],
+  },
+  su: {
+    lt: [['t26', 0], ['bt7', 800], ['t70', 1500]],
+    mt: [['t28', 0], ['t34', 0], ['t3485', 4000]],
+    td: [['su76', 0], ['su85', 2500]],
+    ht: [['kv1s', 2500], ['kv85', 5000], ['is2', 8000]],
+    htd: [['su122', 3000], ['su100', 5000], ['su152', 7000], ['isu152', 10000]],
+  },
+};
+const PROG_KEY = 'zitadelle.progress';
+// XP needed to go from level n to n + 1
+const levelCost = n => 500 + 250 * (n - 1);
+function levelOf(xp) {
+  let n = 1, need = levelCost(1);
+  while (xp >= need) { xp -= need; n++; need = levelCost(n); }
+  return { level: n, into: xp, need };
+}
+let prog = { xp: 0, spent: 0, owned: [] };
+try { Object.assign(prog, JSON.parse(localStorage.getItem(PROG_KEY) || '{}')); } catch (e) { /* storage unavailable */ }
+const saveProg = () => { try { localStorage.setItem(PROG_KEY, JSON.stringify({ xp: prog.xp, spent: prog.spent, owned: prog.owned })); } catch (e) { /* ignore */ } };
+const progFree = () => prog.xp - prog.spent;
+const progOwns = (id, cost) => cost === 0 || prog.owned.includes(id);
+let progNation = 'de', progLastScore = null, progLastTeam = null;
+// battle score -> account XP (called with each snapshot's "you"; score drops back to 0 each battle)
+function progTrackScore(y) {
+  if (!y || typeof y.score !== 'number') return;
+  if (progLastScore != null && y.team === progLastTeam && y.score > progLastScore) {
+    prog.xp += y.score - progLastScore; saveProg();
+    if (progOpen()) renderProgress();
+  }
+  progLastScore = y.score; progLastTeam = y.team;
+}
+const progEl = document.getElementById('progress');
+const progOpen = () => !progEl.classList.contains('hidden');
+function renderProgress() {
+  const L = levelOf(prog.xp);
+  document.getElementById('plevel').textContent = L.level;
+  document.getElementById('pbar').style.width = `${(L.into / L.need) * 100}%`;
+  document.getElementById('pxptext').textContent = `${fmt(L.into)} / ${fmt(L.need)} XP to level ${L.level + 1}  \u00b7  ${fmt(prog.xp)} XP earned in all`;
+  document.getElementById('pfree').textContent = fmt(progFree());
+  progEl.querySelectorAll('.pnat').forEach(b => b.classList.toggle('sel', b.dataset.n === progNation));
+  const tree = TECH_TREE[progNation], box = document.getElementById('ptree');
+  box.innerHTML = '';
+  CATS.forEach(cat => {
+    const line = tree[cat.key];
+    if (!line) return;
+    const row = document.createElement('div');
+    row.className = 'prow';
+    row.innerHTML = `<div class="plbl">${escapeHtml(cat.name)}</div>`;
+    line.forEach(([id, cost], i) => {
+      if (i) row.insertAdjacentHTML('beforeend', '<span class="parrow">\u203a</span>');
+      const prevOwned = i === 0 || progOwns(line[i - 1][0], line[i - 1][1]);
+      const owned = progOwns(id, cost), next = !owned && prevOwned, short = next && progFree() < cost;
+      const node = document.createElement('button');
+      node.className = 'pnode' + (owned ? ' owned' : next ? ' next' + (short ? ' short' : '') : ' locked');
+      node.dataset.id = id;
+      const state = owned ? (cost === 0 ? 'Starter' : 'Owned') : next ? `Unlock \u00b7 ${fmt(cost)} XP` : `Needs ${CLASSES[line[i - 1][0]].name}`;
+      node.innerHTML = `<canvas width="160" height="120"></canvas><span class="pname">${escapeHtml(CLASSES[id].name)}</span><span class="pstate">${escapeHtml(state)}</span>`;
+      node.title = CLASSES[id].desc || '';
+      if (next && !short) node.addEventListener('click', () => {
+        prog.spent += cost; prog.owned.push(id); saveProg();
+        Sound.tone([523, 659, 784], 0.09, 0.06);
+        renderProgress();
+        const n2 = box.querySelector(`.pnode[data-id="${id}"]`); if (n2) n2.classList.add('flash');
+      });
+      row.appendChild(node);
+      drawPreview(node.querySelector('canvas'), id, progNation, 0);
+    });
+    box.appendChild(row);
+  });
+}
+function openProgress() {
+  Sound.init();
+  progNation = playerTeam === 'su' ? 'su' : 'de';
+  progEl.classList.remove('hidden');
+  renderProgress();
+}
+function closeProgress() { progEl.classList.add('hidden'); }
+document.getElementById('progbtn').addEventListener('click', openProgress);
+document.getElementById('pclose').addEventListener('click', closeProgress);
+progEl.querySelectorAll('.pnat').forEach(b => b.addEventListener('click', () => {
+  const to = b.dataset.n, order = ['de', 'su'];
+  if (to === progNation) return;
+  const dir = Math.sign(order.indexOf(to) - order.indexOf(progNation)) || 1;
+  progNation = to;
+  progEl.querySelectorAll('.pnat').forEach(x => x.classList.toggle('sel', x.dataset.n === to));   // tab lights at once
+  swapContent(document.getElementById('ptree'), dir, renderProgress);
+}));
+// prototype tools
+document.getElementById('pgive').addEventListener('click', () => { prog.xp += 1000; saveProg(); renderProgress(); });
+document.getElementById('preset').addEventListener('click', () => { prog = { xp: 0, spent: 0, owned: [] }; saveProg(); renderProgress(); });
+addEventListener('keydown', e => { if (e.key === 'Escape' && progOpen()) { e.stopImmediatePropagation(); closeProgress(); } }, true);
+
 function selectFaction(team) {
   playerTeam = team;
   factionBtns.forEach(b => b.classList.toggle('sel', b.dataset.team === team));
@@ -3369,7 +3601,12 @@ document.getElementById('tohq').addEventListener('click', switchSides);
 document.getElementById('infobtn').addEventListener('click', openInfo);
 document.getElementById('mapinfo').addEventListener('click', openInfo);
 document.getElementById('infoback').addEventListener('click', showHero);
-ui.info.querySelectorAll('.herohalf').forEach(b => b.addEventListener('click', () => openCoalition(b.dataset.coal)));
+ui.info.querySelectorAll('.herohalf').forEach(b => {
+  b.addEventListener('click', () => openCoalition(b.dataset.coal));
+  // hovering a coalition: its low cinematic hum fades in (and out when the mouse leaves)
+  b.addEventListener('mouseenter', () => { Sound.init(); Sound.hum(b.dataset.coal); });
+  b.addEventListener('mouseleave', () => Sound.humStop());
+});
 // member nations' emblems on the hero
 ui.info.querySelectorAll('.heronations [data-n] canvas').forEach(cv => {
   const c = cv.getContext('2d'); c.save(); c.translate(cv.width / 2, cv.height / 2);

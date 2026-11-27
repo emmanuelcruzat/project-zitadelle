@@ -58,7 +58,7 @@ function createGame(opts = {}) {
 
   // attack-line state
   // prog runs from -1 (Soviet Union) to +1 (Germany); owner flips at ±1 and is lost when prog crosses 0.
-  const points = CAP_POINTS.map((p, i) => ({ i, id: p.id, name: p.name, x: p.x, y: p.y, r: CAP_R, line: p.line, k: p.k,
+  const points = CAP_POINTS.map((p, i) => ({ i, id: p.id, name: p.name, x: p.x, y: p.y, r: p.r, capScale: p.capScale, line: p.line, k: p.k,
     prev: p.prev, next: p.next, prog: 0, owner: null, contested: false, active: false, canAtt: false, canDef: false, nd: 0, ns: 0 }));
   const sgn = team => (team === 'de' ? 1 : -1);
   const lineDead = { A: false, B: false };
@@ -500,7 +500,8 @@ function createGame(opts = {}) {
   // Attack lines: capture points, line defeat, battles
   // =====================================================================
   const inZone = (t, p) => (t.x - p.x) ** 2 + (t.y - p.y) ** 2 < p.r * p.r;
-  const capRate = n => (1 + 0.5 * (Math.min(n, 3) - 1)) / CAP_TIME;   // 1, 1.5, 2x for 1, 2, 3+ tanks
+  // 1, 1.5, 2x for a 1, 2, 3+ strength edge; a point's capScale makes it that many times slower (O1: 2)
+  const capRate = (n, p) => (1 + 0.5 * (Math.min(n, 3) - 1)) / CAP_TIME / (p.capScale || 1);
 
   function rewardZone(p, team, n, text) {
     for (const t of tanks) if (t.alive && t.team === team && inZone(t, p)) t.award(text, n);
@@ -526,7 +527,7 @@ function createGame(opts = {}) {
       const big = nd > ns ? 'de' : nd < ns ? 'su' : null;
       const may = big && (big === p.owner || (big === ATTACKER ? p.canAtt : p.canDef));
       if (may) {
-        p.prog = clamp(p.prog + sgn(big) * capRate(Math.abs(nd - ns)) * dt, -1, 1);
+        p.prog = clamp(p.prog + sgn(big) * capRate(Math.abs(nd - ns), p) * dt, -1, 1);
       } else {
         // an abandoned half-taken point drifts back to whoever holds it
         const home = p.owner ? sgn(p.owner) : 0;
@@ -789,7 +790,7 @@ function createGame(opts = {}) {
       if (sc > bs) { bs = sc; best = p.i; }
     }
     if (best < 0) best = att ? O_IDX : points.find(p => p.k === 0 && !lineDead[p.line]) ? points.find(p => p.k === 0 && !lineDead[p.line]).i : O_IDX;
-    const a = rand(0, TAU), r = Math.sqrt(Math.random()) * CAP_R * 0.55;
+    const a = rand(0, TAU), r = Math.sqrt(Math.random()) * points[best].r * 0.55;
     ai.ox = Math.cos(a) * r; ai.oy = Math.sin(a) * r;
     return best;
   }
