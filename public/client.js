@@ -166,6 +166,8 @@ addEventListener('keydown', e => {
   if (k === 'm' && !e.repeat) { Sound.toggle(); bigMessage(Sound.muted ? 'Sound OFF' : 'Sound ON', 1.2); }
   if (SIGHT_ENABLED && k === 'shift' && !e.repeat) setSight(!view2.sight);
   if (k === 't' && !e.repeat) switchSides();
+  if (k === '1' && !e.repeat) setAmmo('ap');
+  if (k === '2' && !e.repeat) setAmmo('apcr');
   // minimap size: + / - (main keyboard or numpad)
   if (k === '+' || k === '=') setMinimapScale(minimapScale * 1.15);
   if (k === '-' || k === '_') setMinimapScale(minimapScale / 1.15);
@@ -370,6 +372,18 @@ const Sound = (() => {
       nz(o, 'bandpass', 1900, 450, 0.15, 1.0, 0.001, 0.18, true);
       osc(o, 'sine', 220, 70, 0.15, 0.8, 0.002, 0.18);
     },
+    ricochet(o) {                                                              // glancing strike, then the round whines away
+      nz(o, 'highpass', 3800, 3800, 0, 0.55, 0.001, 0.025);
+      osc(o, 'sine', 1900, 1750, 0.2, 0.16, 0.001, 0.25);
+      osc(o, 'triangle', 3600, 650, 0.6, 0.22, 0.01, 0.65, 0.02);              // zing
+      osc(o, 'sine', 2900, 500, 0.7, 0.08, 0.02, 0.7, 0.03);
+    },
+    bounce(o, S, own, ric) {                                                   // shell off your own armour: a heavy bell-like clang
+      nz(o, 'lowpass', 5000, 900, 0.05, 1.3, 0.001, 0.07, true);
+      for (const [f, v, d] of [[190, 0.75, 0.9], [447, 0.4, 0.7], [863, 0.28, 0.55], [1390, 0.16, 0.4]]) osc(o, 'sine', f, f * 0.985, d, v, 0.002, d);
+      osc(o, 'sine', 95, 50, 0.2, 1.0, 0.003, 0.25);
+      if (ric) osc(o, 'triangle', 3400, 600, 0.6, 0.16, 0.02, 0.6, 0.05);   // and the round singing off
+    },
     clank(o) {                                                                 // ricochet: ringing plate + whine
       nz(o, 'highpass', 3500, 3500, 0, 0.5, 0.001, 0.03);
       for (const f of [1240, 2870, 4410]) osc(o, 'sine', f, f * 0.97, 0.4, 0.18, 0.001, 0.45);
@@ -382,7 +396,7 @@ const Sound = (() => {
       osc(o, 'sine', 300, 180, 0.08, 0.7, 0.002, 0.12, 0.11);
     },
   };
-  const COST = { cannon: 2, boom: 4, rocket: 1.5, mg: 0.6, hit: 0.6, clank: 0.6, reload: 0.5 };
+  const COST = { ricochet: 0.8, bounce: 1.5, cannon: 2, boom: 4, rocket: 1.5, mg: 0.6, hit: 0.6, clank: 0.6, reload: 0.5 };
 
   // vol: loudness at the source; dn: 0 (on top of you) .. 1 (edge of hearing)
   api.play = (kind, vol = 1, dn = 0, S = 1, own = false, x1) => {
@@ -439,7 +453,7 @@ const Sound = (() => {
   };
   return api;
 })();
-const HEAR = { cannon: 3800, boom: 3800, rocket: 3000, mg: 2000, hit: 1500, clank: 1500, reload: 400 };
+const HEAR = { ricochet: 2200, bounce: 400, cannon: 3800, boom: 3800, rocket: 3000, mg: 2000, hit: 1500, clank: 1500, reload: 400 };
 function soundAt(kind, x, y, vol = 1, S = 1, own = false, x1) {
   // small guns don't carry as far as big ones
   const reach = (HEAR[kind] || 1600) * (kind === 'cannon' ? clamp(S, 0.5, 1.4) : 1);
@@ -562,6 +576,47 @@ const cam = { x: CENTER, y: CENTER, scale: 1, shake: 0 };
 let msg = { text: '', t: 0, dur: 0 };
 // team: optional side whose emblem is drawn in front of the text
 function bigMessage(text, dur = 2.5, team = null) { msg = { text, t: now, dur, team }; }
+// ---- damage direction: a red arc around your tank on the side a hit came from ----
+const DMG_DIR_LEN = 1.6;
+let dmgDirs = [];
+function addDamageDir(e) {
+  const me = myTank(); if (!me) return;
+  if (e.g) Sound.play('bounce', 1, 0, 1, true, e.r);     // it bounced off you: right next to your ear
+  const a = Math.atan2(e.y - me.y, e.x - me.x);
+  // a hit from (nearly) the same direction refreshes that arc instead of stacking another
+  const same = dmgDirs.find(d => !!d.g === !!e.g && Math.abs(angDiff(Math.atan2(d.y - me.y, d.x - me.x), a)) < 0.35);
+  if (same) { same.x = e.x; same.y = e.y; same.t = now; same.s = Math.min(1, same.s + e.s); return; }
+  dmgDirs.push({ x: e.x, y: e.y, t: now, s: e.s, g: !!e.g });
+  if (dmgDirs.length > 6) dmgDirs.shift();
+}
+function drawDamageDirs() {
+  dmgDirs = dmgDirs.filter(d => now - d.t < DMG_DIR_LEN);
+  const me = myTank();
+  if (!me || state !== 'play' || !dmgDirs.length) return;
+  const cx0 = W / 2 + (me.x - cam.x) * cam.scale, cy0 = H / 2 + (me.y - cam.y) * cam.scale;
+  const R = Math.min(W, H) * 0.2 + me.r * cam.scale;
+  ctx.save(); ctx.lineCap = 'round';
+  for (const d of dmgDirs) {
+    const age = now - d.t, a = Math.atan2(d.y - me.y, d.x - me.x);
+    const alpha = clamp(1 - age / DMG_DIR_LEN, 0, 1) * (0.45 + 0.55 * Math.min(1, d.s * 4));
+    const span = 0.32 + 0.18 * Math.min(1, d.s * 4);            // bigger hits draw a wider arc
+    const pop = 1 + 0.08 * Math.max(0, 1 - age / 0.15);          // a quick swell when it lands
+    // soft outer glow, then the bright core (red: it hurt; grey: it bounced off)
+    const [glow, core, tip] = d.g ? ['150,150,150', '215,215,210', '225,225,220'] : ['200,20,10', '255,60,40', '255,80,60'];
+    ctx.strokeStyle = `rgba(${glow},${0.35 * alpha})`; ctx.lineWidth = 22;
+    ctx.beginPath(); ctx.arc(cx0, cy0, R * pop, a - span, a + span); ctx.stroke();
+    ctx.strokeStyle = `rgba(${core},${0.85 * alpha})`; ctx.lineWidth = 7;
+    ctx.beginPath(); ctx.arc(cx0, cy0, R * pop, a - span * 0.8, a + span * 0.8); ctx.stroke();
+    // small chevron pointing outward at the source
+    const tx = cx0 + Math.cos(a) * (R * pop + 16), ty = cy0 + Math.sin(a) * (R * pop + 16);
+    ctx.fillStyle = `rgba(${tip},${0.9 * alpha})`; ctx.beginPath();
+    ctx.moveTo(tx + Math.cos(a) * 9, ty + Math.sin(a) * 9);
+    ctx.lineTo(tx + Math.cos(a + 2.4) * 8, ty + Math.sin(a + 2.4) * 8);
+    ctx.lineTo(tx + Math.cos(a - 2.4) * 8, ty + Math.sin(a - 2.4) * 8);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+}
 // ---- spotting: hold Q, flick toward a vehicle type, release to mark that spot for your side ----
 const SPOT_LEN = 8;
 let spots = [], markWheel = null;
@@ -941,6 +996,17 @@ function handleEvent(e) {
         break;
       }
       for (let k = 0; k < 3; k++) addP(e.x, e.y, -e.vx * rand(0.05, 0.2) + rand(-60, 60), -e.vy * rand(0.05, 0.2) + rand(-60, 60), rand(0.1, 0.25), 2.5, '#ffd27a', 'spark');
+      if (e.z === 4) {
+        const sp = Math.hypot(e.vx, e.vy) || 1, ux = e.vx / sp, uy = e.vy / sp;
+        for (let k = 0; k < 14; k++) {
+          const v = rand(120, 420), a = Math.atan2(uy, ux) + rand(-0.5, 0.5);
+          addP(e.x, e.y, Math.cos(a) * v, Math.sin(a) * v, rand(0.15, 0.4), rand(1.5, 3), pick(['#fff1b8', '#ffd27a', '#ffb347']), 'spark');
+        }
+        addP(e.x, e.y, ux * 40, uy * 40, 0.12, 14, '#fff6d8', 'flash');
+        addP(e.x, e.y, rand(-10, 10), rand(-10, 10), 0.5, 10, 'rgba(210,205,190,0.5)', 'smoke');
+        soundAt('ricochet', e.x, e.y, 0.75);
+        break;
+      }
       soundAt(e.z === 1 ? 'clank' : 'hit', e.x, e.y, 0.7);
       break;
     case 'x': {
@@ -1005,6 +1071,7 @@ function handleEvent(e) {
     case 'chat': addChat(e); break;
     case 'intro': battleIntro(e.t); break;
     case 'sh': cam.shake = Math.min(14, cam.shake + e.a); break;
+    case 'dh': addDamageDir(e); break;
     case 'die': onPlayerDeath(e); break;
   }
 }
@@ -1741,9 +1808,19 @@ function drawTankWorld(t) {
 function drawLabels(t) {
   const isMe = you && t.id === you.id;
   const ally = you && t.team === you.team;
-  const y = t.y - t.r * 1.45 - 6;
+  const y0 = t.y - t.r * 1.45 - 6;
   if (!you || ally) {   // enemy crews stay anonymous
     const fs = Math.round(15 + t.r * 0.12);
+    // you and your allies: the vehicle as a small subtitle under the name (the name moves up to make room)
+    const sub = you && ally && t.cls ? t.cls.name : null, ss = Math.round(fs * 0.62);
+    const y = sub ? y0 - ss - 1 : y0;
+    if (sub) {
+      ctx.font = `400 ${ss}px Oswald, Impact, sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.7)'; ctx.lineJoin = 'round';
+      ctx.strokeText(sub, t.x, y0);
+      ctx.fillStyle = 'rgba(232,226,200,0.85)'; ctx.fillText(sub, t.x, y0);
+    }
     ctx.font = `600 ${fs}px Oswald, Impact, sans-serif`;
     const tw = ctx.measureText(t.name).width;
     const tx = t.x + 9;   // shift right to make room for the insignia
@@ -2137,6 +2214,7 @@ function drawHUD() {
     ctx.globalAlpha = 1;
   }
   drawAwards();
+  drawDamageDirs();
   drawSpots();
   drawMarkWheel();
 
@@ -2154,7 +2232,7 @@ function drawHUD() {
   if (you && state === 'play') {
     const cls = clsByIdx(you.c);
     const by = H - 64;   // anchor for the capture-status readout below
-    if (autofire) hudText('AUTOFIRE', cx, H - 22, 13, '#f6e27a');
+    if (autofire) hudText('AUTOFIRE', cx, H - 62, 13, '#f6e27a');
 
     const me = myTank();
     // ---- capture status while standing in a zone ----
@@ -2216,7 +2294,8 @@ function drawHUD() {
         ctx.fillStyle = rl > 0 ? '#e6a03c' : '#7fd46a';
         ctx.fillRect(rx, ry, bw * (1 - rl), bh);
       }
-      if (rl > 0) hudText(clip ? 'RELOADING' : 'LOADING', mx, ry + bh + 11, 11, '#e6a03c', 'center', 400);
+      if (you.ap === 0 && you.ar === 0) hudText('OUT OF AMMO', mx, ry + bh + 11, 11, '#ff7a5c', 'center', 600);
+      else if (rl > 0) hudText(clip ? 'RELOADING' : 'LOADING', mx, ry + bh + 11, 11, '#e6a03c', 'center', 400);
     }
     if (me) {
       // ---- aim line: from the main gun's muzzle to the cursor ----
@@ -2443,6 +2522,7 @@ function openDeployMap() {
   }
 }
 function closeDeployMap() {
+  armorTipHide();
   dmap.open = false; dmap.sel = null; dmap.hover = null;
   ui.death.classList.add('hidden'); ui.panel.classList.add('hidden'); ui.mapbar.classList.add('hidden');
   canvas.style.cursor = '';
@@ -2458,6 +2538,7 @@ function showDeployPanel() {
   ui.panel.classList.remove('hidden');
 }
 function backToMap() {
+  armorTipHide();
   dmap.stage = 'map'; dmap.sel = null;
   ui.panel.classList.add('hidden');
   ui.mapbar.classList.remove('hidden');
@@ -2865,8 +2946,66 @@ function pickerDetail(el, id) {
   const left = poolArr(c.faction, dmap.sel)[c.cat];
   el.querySelector('.vdetail').innerHTML = `<b>${escapeHtml(c.name)}</b> <span class="vrole">${CATS[c.cat].name} · ${left} in reserve</span>`;
 }
+// ---- armour card: hold the mouse on a vehicle in the picker for a moment ----
+const ARMOR_TIP_DELAY = 1000;
+const armorTip = document.getElementById('armortip');
+let armorTipT = null;
+// colour for an effective thickness: thin red -> orange -> yellow -> thick green
+function armorColor(mm) {
+  const stops = [[0, [200, 60, 45]], [40, [220, 120, 50]], [80, [225, 195, 70]], [130, [140, 200, 90]], [200, [90, 190, 120]]];
+  let i = 1; while (i < stops.length - 1 && mm > stops[i][0]) i++;
+  const [m0, c0] = stops[i - 1], [m1, c1] = stops[i], f = clamp((mm - m0) / (m1 - m0), 0, 1);
+  return `rgb(${c0.map((v, k) => Math.round(v + (c1[k] - v) * f)).join(',')})`;
+}
+function armorTipSoon(tile, id) {
+  armorTipHide();
+  armorTipT = setTimeout(() => showArmorTip(tile, id), ARMOR_TIP_DELAY);
+}
+function armorTipHide() { clearTimeout(armorTipT); armorTipT = null; armorTip.classList.add('hidden'); }
+function showArmorTip(tile, id) {
+  const A = window.ZARMOR, c = CLASSES[id];
+  if (!A || !c || !A.armorOf(id)) return;
+  const [front, side, rear] = A.armorOf(id), slope = A.slopeOf(id);
+  const effFront = Math.round(front / Math.cos(slope * Math.PI / 180));
+  armorTip.querySelector('.atname').textContent = c.name;
+  const apcr = A.ammoOf(id).apcr;
+  armorTip.querySelector('.atgun').innerHTML = `Gun: <b>${A.penOf(id)} mm</b> AP` + (apcr ? ` · <b>${A.apcrPenOf(id)} mm</b> APCR` : '');
+  // top-down hull, front up, each side a plate coloured by its effective armour
+  const cv = armorTip.querySelector('canvas'), g = cv.getContext('2d'), S = 2;     // drawn at 2x for crispness
+  g.setTransform(S, 0, 0, S, 0, 0); g.clearRect(0, 0, cv.width, cv.height);
+  const cx = 110, cy = 92, k = 52 / Math.max(c.hull[0], c.hull[1] * 1.2);
+  const L = c.hull[0] * k, Wd = c.hull[1] * k, x0 = cx - Wd / 2, y0 = cy - L / 2, pw = 7;
+  g.fillStyle = 'rgba(231,220,177,0.08)'; g.fillRect(x0, y0, Wd, L);
+  const plate = (x, y, w, h, mm) => { g.fillStyle = armorColor(mm); g.fillRect(x, y, w, h); };
+  plate(x0, y0 - pw, Wd, pw, effFront);                // front
+  plate(x0, y0 + L, Wd, pw, rear);                     // rear
+  plate(x0 - pw, y0, pw, L, side); plate(x0 + Wd, y0, pw, L, side);   // sides
+  // a turret / casemate hint so the front reads at a glance
+  g.fillStyle = 'rgba(231,220,177,0.18)';
+  g.beginPath(); g.arc(cx, cy - L * 0.05, Wd * 0.28, 0, TAU); g.fill();
+  g.fillRect(cx - 1.5, y0 - pw - 10, 3, cy - L * 0.05 - (y0 - pw - 10));
+  const label = (txt, x, y, col, size = 13, align = 'center', weight = 600) => {
+    g.font = `${weight} ${size}px Oswald, Impact, sans-serif`; g.textAlign = align; g.textBaseline = 'middle';
+    g.lineWidth = 3; g.strokeStyle = 'rgba(0,0,0,0.8)'; g.strokeText(txt, x, y); g.fillStyle = col; g.fillText(txt, x, y);
+  };
+  label(`${effFront} mm`, cx, y0 - pw - 22, armorColor(effFront), 15);
+  if (slope) label(`${front} mm @ ${slope}°`, cx, y0 - pw - 37, '#a99f78', 10, 'center', 400);
+  label(`${rear} mm`, cx, y0 + L + pw + 14, armorColor(rear));
+  label(`${side}`, x0 - pw - 6, cy, armorColor(side), 13, 'right');
+  label(`${side}`, x0 + Wd + pw + 6, cy, armorColor(side), 13, 'left');
+  label('FRONT', cx, y0 + 9, 'rgba(231,220,177,0.45)', 8, 'center', 400);
+  label('REAR', cx, y0 + L - 9, 'rgba(231,220,177,0.45)', 8, 'center', 400);
+  // place it beside the tile, on whichever side has room
+  armorTip.classList.remove('hidden');
+  const r = tile.getBoundingClientRect(), w = armorTip.offsetWidth, h = armorTip.offsetHeight;
+  let x = r.left - w - 10; if (x < 8) x = Math.min(innerWidth - w - 8, r.right + 10);
+  armorTip.style.left = x + 'px';
+  armorTip.style.top = clamp(r.top + r.height / 2 - h / 2, 8, innerHeight - h - 8) + 'px';
+}
+
 function buildPicker(el, team) {
   if (!el) return;
+  armorTipHide();
   if (!CLASSES[selCls[team]] || CLASSES[selCls[team]].faction !== team || !CLASSES[selCls[team]].enabled) selCls[team] = START_CLASS[team];
   el.innerHTML = '<div class="vgroups"></div><div class="vdetail"></div>';
   const groups = el.querySelector('.vgroups'), grids = {};
@@ -2891,8 +3030,8 @@ function buildPicker(el, team) {
       el.querySelectorAll('.veh').forEach(v => v.classList.toggle('sel', v.dataset.id === id));
       pickerDetail(el, id);
     });
-    b.addEventListener('mouseenter', () => pickerDetail(el, id));
-    b.addEventListener('mouseleave', () => pickerDetail(el, selCls[team]));
+    b.addEventListener('mouseenter', () => { pickerDetail(el, id); armorTipSoon(b, id); });
+    b.addEventListener('mouseleave', () => { pickerDetail(el, selCls[team]); armorTipHide(); });
     grid.appendChild(b);
     drawPreview(b.querySelector('canvas'), id, team, 0);
   }
@@ -2977,7 +3116,44 @@ addEventListener('keydown', e => {
   if (state === 'play' || (state === 'dead' && dmap.open && dmap.stage === 'map')) { e.preventDefault(); openChat(); }
 });
 
+// ---- main gun ammo bar ----
+const ammoBar = document.getElementById('ammobar');
+const ammoBtn = { ap: ammoBar.querySelector('[data-a="ap"]'), apcr: ammoBar.querySelector('[data-a="apcr"]') };
+let ammoSig = '';
+function setAmmo(s) {
+  if (state !== 'play' || !you || !you.alive) return;
+  if (s === 'apcr' && !you.ar) { bigMessage('No APCR rounds for this gun', 1.2); return; }
+  send({ t: 'ammo', s });
+}
+// (a display only: switched with 1 / 2)
+function updateAmmoBar() {
+  const cls = you ? clsByIdx(you.c) : null;
+  const show = state === 'play' && you && you.alive && cls && cls.guns[0].kind === 'shell' && you.ap !== undefined;
+  ammoBar.classList.toggle('hidden', !show);
+  if (!show) { ammoSig = ''; return; }
+  // reload progress of the round going in (magazine guns: only while changing magazines)
+  const prog = you.rl > 0 ? Math.round((1 - you.rl) * 50) / 50 : 0;
+  const sig = [cls.id, you.ap, you.ar, you.as, you.aq, prog].join(',');
+  if (sig === ammoSig) return;
+  ammoSig = sig;
+  const A = window.ZARMOR;
+  for (const [s, b] of Object.entries(ammoBtn)) {
+    const n = s === 'ap' ? you.ap : you.ar, pen = A ? (s === 'ap' ? A.penOf(cls.id) : A.apcrPenOf(cls.id)) : null;
+    // (no count shown; an empty type just dims)
+    b.querySelector('.apen').innerHTML = pen ? `${pen}<small>mm</small>` : '';
+    const loaded = (s === 'apcr') === !!you.as, queued = (s === 'apcr') === !!you.aq && !loaded;
+    b.classList.toggle('sel', loaded);
+    b.classList.toggle('queued', queued);
+    b.classList.toggle('loading', loaded && prog > 0);
+    b.style.setProperty('--p', loaded ? prog : 0);
+    b.classList.toggle('empty', !n);
+  }
+  // a gun that never had APCR: hide that button
+  ammoBtn.apcr.style.display = A && A.ammoOf(cls.id).apcr ? '' : 'none';
+}
+
 function updateUI(dt) {
+  updateAmmoBar();
   updateChat();
   document.body.classList.toggle('end-open', !!phase);   // hides the deploy-screen panels behind the end screen
   if (state === 'dead') {

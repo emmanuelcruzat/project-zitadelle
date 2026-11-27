@@ -84,6 +84,14 @@
   </div>
 </div>
 <div id="infotip" class="infotip hidden"></div>
+<!-- deploy picker: hold the mouse on a vehicle to see its armour -->
+<div id="armortip" class="armortip hidden"><div class="atname"></div><canvas width="440" height="360"></canvas><div class="atgun"></div></div>
+
+<!-- main gun ammo, bottom centre: a display, switched with 1 / 2 -->
+<div id="ammobar" class="ammobar hidden">
+  <div class="aslot" data-a="ap"><div class="abadge"><span class="aname">AP</span><svg class="shell" viewBox="0 0 20 52" aria-hidden="true"><path d="M10 2 C14.5 7 15.5 13 15.5 20 L15.5 24 L4.5 24 L4.5 20 C4.5 13 5.5 7 10 2 Z" fill="#d6cca3"/><rect x="4" y="24.6" width="12" height="2.6" fill="#c0392b"/><rect x="4.5" y="28" width="11" height="19" rx="1" fill="#d6cca3"/><rect x="3.5" y="47.6" width="13" height="2.6" rx="0.8" fill="#c0392b"/></svg></div><span class="apen"></span><span class="akey">1</span></div>
+  <div class="aslot" data-a="apcr"><div class="abadge"><span class="aname">APCR</span><svg class="shell" viewBox="0 0 20 52" aria-hidden="true"><path d="M10 1.5 C12.6 5 13.4 10 13.4 16 L13.4 24 L6.6 24 L6.6 16 C6.6 10 7.4 5 10 1.5 Z" fill="#d6cca3"/><path d="M10 1.5 C11.8 4 12.7 7 13 10 L7 10 C7.3 7 8.2 4 10 1.5 Z" fill="#c0392b"/><rect x="4" y="24.6" width="12" height="2.6" fill="#c0392b"/><rect x="4.5" y="28" width="11" height="19" rx="1" fill="#d6cca3"/><rect x="3.5" y="47.6" width="13" height="2.6" rx="0.8" fill="#c0392b"/></svg></div><span class="apen"></span><span class="akey">2</span></div>
+</div>
 
 <!-- chat, lower left: Enter to type, Tab switches team / all, Enter sends, Esc cancels -->
 <div id="chat" class="chat hidden">
@@ -93,6 +101,7 @@
 </div>
 
 <script src="shared.js"></script>
+<script src="armor.js"></script>
 <script src="client.js"></script>
 </body>
 </html>

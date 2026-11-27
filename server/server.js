@@ -18,6 +18,7 @@ const FILES = {
   '/style.css':  ['public/style.css', 'text/css; charset=utf-8'],
   '/client.js':  ['public/client.js', 'application/javascript; charset=utf-8'],
   '/shared.js':  ['shared/shared.js', 'application/javascript; charset=utf-8'],
+  '/armor.js':   ['shared/armor.js', 'application/javascript; charset=utf-8'],
 };
 
 // Music in public/music/. Each slot lists one or more file names there (the client picks one at random);
