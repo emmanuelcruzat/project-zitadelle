@@ -1578,22 +1578,22 @@ function drawPoints() {
   const c = ctx;
   drawRoute(c, 1, 0, 0, 10);
   CAP_POINTS.forEach((p, i) => {
-    if (!inView(p.x, p.y, CAP_R + 120)) return;
+    if (!inView(p.x, p.y, p.r + 120)) return;
     const [prog, ow, contested, active] = cps[i] || [0, 0, 0, 0];
     const owner = OWNER[ow], col = ptColor(owner);
     const [cr, cg, cb] = hexRgb(col);
     c.fillStyle = `rgba(${cr},${cg},${cb},${active ? 0.16 : 0.06})`;
-    c.beginPath(); c.arc(p.x, p.y, CAP_R, 0, TAU); c.fill();
+    c.beginPath(); c.arc(p.x, p.y, p.r, 0, TAU); c.fill();
     // dashed perimeter (marching while contested); locked points get a faint solid ring and a padlock
     c.strokeStyle = contested ? `rgba(230,80,50,${0.55 + 0.35 * Math.sin(now * 8)})` : `rgba(${cr},${cg},${cb},${active ? 0.85 : 0.35})`;
     c.lineWidth = active ? 5 : 3; c.setLineDash(active ? [26, 16] : []); c.lineDashOffset = contested ? -now * 60 : 0;
-    c.beginPath(); c.arc(p.x, p.y, CAP_R, 0, TAU); c.stroke();
-    if (!active) drawLock(c, p.x, p.y - CAP_R * 0.55, 26, `rgba(${cr * 0.4 | 0},${cg * 0.4 | 0},${cb * 0.4 | 0},0.4)`);
+    c.beginPath(); c.arc(p.x, p.y, p.r, 0, TAU); c.stroke();
+    if (!active) drawLock(c, p.x, p.y - p.r * 0.55, 26, `rgba(${cr * 0.4 | 0},${cg * 0.4 | 0},${cb * 0.4 | 0},0.4)`);
     c.setLineDash([]); c.lineDashOffset = 0;
     // capture progress arc, drawn in the colour of whoever the needle leans toward
     if (Math.abs(prog) > 0.01 && Math.abs(prog) < 0.999) {
       c.strokeStyle = ptColor(prog > 0 ? 'de' : 'su'); c.lineWidth = 12;
-      c.beginPath(); c.arc(p.x, p.y, CAP_R - 14, -Math.PI / 2, -Math.PI / 2 + TAU * Math.abs(prog)); c.stroke();
+      c.beginPath(); c.arc(p.x, p.y, p.r - 14, -Math.PI / 2, -Math.PI / 2 + TAU * Math.abs(prog)); c.stroke();
     }
     // letter + name painted on the ground
     c.textAlign = 'center'; c.textBaseline = 'middle';
@@ -1601,7 +1601,7 @@ function drawPoints() {
     c.font = '600 150px Oswald, Impact, sans-serif';
     c.fillText(p.id, p.x, p.y + 6);
     c.font = '600 30px Oswald, Impact, sans-serif';
-    c.fillText(p.name.toUpperCase(), p.x, p.y + CAP_R * 0.62);
+    c.fillText(p.name.toUpperCase(), p.x, p.y + p.r * 0.62);
     // flagpole with a waving banner
     const fx = p.x + 70, fy = p.y - 60;
     c.strokeStyle = '#3a352a'; c.lineWidth = 4;
@@ -2335,7 +2335,7 @@ function drawHUD() {
     const me = myTank();
     // ---- capture status while standing in a zone ----
     if (me) {
-      const i = CAP_POINTS.findIndex(p => Math.hypot(me.x - p.x, me.y - p.y) < CAP_R);
+      const i = CAP_POINTS.findIndex(p => Math.hypot(me.x - p.x, me.y - p.y) < p.r);
       if (i >= 0) {
         const p = CAP_POINTS[i], [prog, ow, contested, active] = cps[i], owner = OWNER[ow];
         const mine = you.team === 'de' ? prog : -prog;       // -1 enemy .. +1 ours
@@ -2467,11 +2467,11 @@ function drawMinimap() {
     const owner = OWNER[(cps[i] || [])[1]];
     ctx.globalAlpha = MA * (cps[i] && cps[i][3] ? 0.95 : 0.45);
     ctx.fillStyle = owner ? ptColor(owner) : '#6d6a55';
-    ctx.beginPath(); ctx.arc(x + p.x * k, y + p.y * k, Math.max(6, CAP_R * k), 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + p.x * k, y + p.y * k, Math.max(6, p.r * k), 0, TAU); ctx.fill();
     ctx.globalAlpha = MA;
     if (cps[i] && cps[i][2]) {
       ctx.strokeStyle = `rgba(255,90,60,${0.5 + 0.5 * Math.sin(now * 10)})`; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(x + p.x * k, y + p.y * k, Math.max(6, CAP_R * k) + 2, 0, TAU); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x + p.x * k, y + p.y * k, Math.max(6, p.r * k) + 2, 0, TAU); ctx.stroke();
     }
     hudText(p.id, x + p.x * k, y + p.y * k + 0.5, 10, '#fff', 'center', 600);
   });
@@ -2591,9 +2591,9 @@ function spawnOptions() {
     if (p.line && isLineDead(p.line)) why = 'line defeated';
     else if (owner !== playerTeam) why = owner ? 'enemy held' : 'not held';
     else if (c[2]) why = 'contested';
-    else if (vTanks.some(t => t.team !== playerTeam && Math.hypot(t.x - p.x, t.y - p.y) < CAP_R + 300)) why = 'enemies nearby';
+    else if (vTanks.some(t => t.team !== playerTeam && Math.hypot(t.x - p.x, t.y - p.y) < p.r + 300)) why = 'enemies nearby';
     else if (!poolArr(playerTeam, i).some(n => n > 0)) why = 'out of reserves';
-    out.push({ code: i, x: p.x, y: p.y, r: CAP_R, id: p.id, name: p.name, owner, ok: !why, why });
+    out.push({ code: i, x: p.x, y: p.y, r: p.r, id: p.id, name: p.name, owner, ok: !why, why });
   });
   return out;
 }

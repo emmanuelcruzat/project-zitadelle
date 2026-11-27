@@ -39,7 +39,8 @@ const enemyOf = t => (t === 'de' ? 'su' : 'de');
 // the defender wins when both lines are defeated. A side that has used up all its reserves and has no
 // vehicles left on the field also loses.
 const ATTACKER = 'de', DEFENDER = 'su';
-const CAP_R = 400;                 // capture zone radius
+const CAP_R = 400;                 // capture zone radius (each point's own is p.r)
+const O1_R = 600, O1_CAP = 2;      // Prokhorovka: a bigger zone that takes O1_CAP times as long to capture
 const LINES = ['A', 'B'];
 const OBJ = { x: 6300, y: 1700 };  // O1, Prokhorovka
 const LINE_START = { A: { x: 900, y: 4400 }, B: { x: 3600, y: 7100 } };
@@ -55,11 +56,11 @@ for (const L of LINES) {
   const px = -dy / len * LINE_BOW[L], py = dx / len * LINE_BOW[L];   // perpendicular, bowing outward
   LINE_T.forEach((t, k) => {
     const bow = 650 * Math.sin(Math.PI * t);
-    CAP_POINTS.push({ id: L + (5 - k), name: LINE_NAMES[L][k], line: L, k,
+    CAP_POINTS.push({ id: L + (5 - k), name: LINE_NAMES[L][k], line: L, k, r: CAP_R, capScale: 1,
       x: Math.round(s.x + dx * t + px * bow), y: Math.round(s.y + dy * t + py * bow) });
   });
 }
-CAP_POINTS.push({ id: 'O1', name: 'Prokhorovka', line: null, k: 5, x: OBJ.x, y: OBJ.y });
+CAP_POINTS.push({ id: 'O1', name: 'Prokhorovka', line: null, k: 5, x: OBJ.x, y: OBJ.y, r: O1_R, capScale: O1_CAP });
 const O_IDX = CAP_POINTS.length - 1;
 // neighbours: prev = toward the attacker's start, next = toward O1
 CAP_POINTS.forEach((p, i) => {
