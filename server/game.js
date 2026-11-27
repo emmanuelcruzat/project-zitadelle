@@ -42,7 +42,10 @@ const validClass = (id, team) => (CLASSES[id] && CLASSES[id].faction === team &&
 // score awards
 // kill: Armor Destroyed; assist: Armor Destroyed Assist (dealt >= ASSIST_SHARE of the tank's health in the
 // last ASSIST_WINDOW s); damage: Armor Damaged, paid in DAMAGE_STEP chunks, worth this much per whole tank's health
-const SCORE = { kill: 100, assist: 50, damage: 60, capture: 150, neutral: 50 };
+const SCORE = { assist: 50, damage: 60, capture: 150, neutral: 50, raid: 50, defend: 50 };
+// a kill is worth more the bigger the vehicle destroyed (by reserve category, see CATS)
+const KILL_SCORE = { lt: 70, mt: 100, ht: 150, td: 100, htd: 150 };
+const killScore = c => (CATS[c.cat] && KILL_SCORE[CATS[c.cat].key]) || 100;
 const ASSIST_SHARE = 0.15, ASSIST_WINDOW = 30, DAMAGE_STEP = 0.1;
 
 function createGame(opts = {}) {
@@ -437,7 +440,13 @@ function createGame(opts = {}) {
     let kn = 'Defensive line', kt = null, kc = '';
     if (src && src.kind === 'tank') {
       kn = src.name; kt = src.team; kc = src.cls.name;
-      if (src.team !== t.team) { src.award('Armor Destroyed', SCORE.kill); src.kills++; }
+      if (src.team !== t.team) {
+        src.award('Armor Destroyed', killScore(t.cls)); src.kills++;
+        // where the killer is: inside a point the enemy holds (raiding) or one its own side holds (defending)
+        const at = points.find(p => p.owner && inZone(src, p));
+        if (at && at.owner === t.team) src.award('Raiding', SCORE.raid);
+        if (at && at.owner === src.team) src.award('Defending', SCORE.defend);
+      }
     } else if (src && src.kind === 'ob') {
       kn = src.type === 'bunker' ? 'Pillbox' : 'Fuel drum';
     }
@@ -1432,9 +1441,12 @@ function createGame(opts = {}) {
     snap.ph = phase === 'play' ? 0 : [winner === 'de' ? 1 : 2, Math.ceil(phaseEnd - time), winWhy];
     if (phase === 'play') snap.bt = Math.max(0, Math.ceil(battleEnd - time));   // battle clock
     snap.lg = r1(Math.max(0, (client.logiEnd || 0) - time));                     // your logistics load (s)
-    // leaderboard: [id, team, name, score, kills, deaths, rank, alive]
+    // leaderboard: [id, team, name, score, kills, deaths, rank, alive, logistics load (allies only, else -1)]
     if (includeBoard) snap.on = clients.size;   // people connected (playing or on the menu)
-    if (includeBoard) snap.lb = tanks.map(k => [k.id, TEAM_IDS.indexOf(k.team), k.name, k.score, k.kills, k.deaths, k.rank, k.alive ? 1 : 0]);
+    // last field: logistics load in seconds, only for your own side's rows (-1 for the enemy's, so it never leaves the server)
+    const myTeam = t ? t.team : client.lockTeam;
+    if (includeBoard) snap.lb = tanks.map(k => [k.id, TEAM_IDS.indexOf(k.team), k.name, k.score, k.kills, k.deaths, k.rank, k.alive ? 1 : 0,
+      k.team === myTeam ? Math.round(logiLoad(k)) : -1]);
     if (t) {
       snap.you = { id: t.id, alive: t.alive ? 1 : 0, score: t.score, rank: t.rank, deaths: t.deaths, c: t.cls.idx, kills: t.kills, fov: r3(t.fov), team: t.team,
         // reload progress; a magazine gun only shows it while changing magazines (am = rounds left)

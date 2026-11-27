@@ -495,6 +495,14 @@ const logiCost = id => (window.ZARMOR ? window.ZARMOR.logiOf(id) : 0);
 const logiLimit = () => (window.ZARMOR ? window.ZARMOR.LOGI_LIMIT : Infinity);
 const logiWait = id => Math.max(0, logiLoad() + logiCost(id) - logiLimit());   // seconds until id fits
 const mmss = s => { s = Math.ceil(s); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+// hollow logistics ring at (x, y): dark track, filled clockwise from 12 o'clock by fraction f in its gauge colour
+function drawLogiRing(c, x, y, R, lw, f) {
+  f = clamp(f, 0, 1);
+  c.save(); c.lineWidth = lw; c.lineCap = 'butt';
+  c.strokeStyle = 'rgba(0,0,0,0.55)'; c.beginPath(); c.arc(x, y, R, 0, TAU); c.stroke();
+  if (f > 0) { c.strokeStyle = logiColor(f); c.beginPath(); c.arc(x, y, R, -Math.PI / 2, -Math.PI / 2 + f * TAU); c.stroke(); }
+  c.restore();
+}
 // gauge colour for a fill fraction: green -> yellow -> red
 function logiColor(f) {
   const stops = [[0, [127, 212, 106]], [0.5, [230, 200, 74]], [1, [224, 87, 63]]];
@@ -2249,11 +2257,7 @@ function drawHUD() {
   // logistics load, top left under the connection line: a hollow ring filling clockwise from 12 o'clock
   if (connected && state !== 'menu') {
     const load = logiLoad(), f = clamp(load / logiLimit(), 0, 1), x = 30, y = 52, R = 14, col = logiColor(f);
-    ctx.save();
-    ctx.lineWidth = 5; ctx.lineCap = 'butt';
-    ctx.strokeStyle = 'rgba(0,0,0,0.55)'; ctx.beginPath(); ctx.arc(x, y, R, 0, TAU); ctx.stroke();
-    if (f > 0) { ctx.strokeStyle = col; ctx.beginPath(); ctx.arc(x, y, R, -Math.PI / 2, -Math.PI / 2 + f * TAU); ctx.stroke(); }
-    ctx.restore();
+    drawLogiRing(ctx, x, y, R, 5, f);
     hudText('LOGISTICS', x + R + 10, y - 7, 10, '#a99f78', 'left', 400);
     hudText(mmss(load), x + R + 10, y + 7, 13, f > 0 ? col : '#e8e0c0', 'left', 600);
   }
@@ -2723,7 +2727,7 @@ function drawBoard() {
     const kills = list.reduce((m, r) => m + r[4], 0);
     hudText(TEAMS[tm].name.toUpperCase(), x0 + f(12), y0 + f(21), 18, '#f0e8c8', 'left');
     hudText(`${list.length} tanks · ${kills} kills`, x0 + colW - f(12), y0 + f(21), 12, '#a99f78', 'right', 400);
-    const cS = x0 + colW - f(92), cK = x0 + colW - f(50), cD = x0 + colW - f(16);
+    const cS = x0 + colW - f(92), cK = x0 + colW - f(50), cD = x0 + colW - f(16), cL = cS - f(66);   // cL: logistics ring (allies)
     hudText('COMMANDER', x0 + f(40), y0 + f(45), 10, '#8d8668', 'left', 400);
     hudText('SCORE', cS, y0 + f(45), 10, '#8d8668', 'right', 400);
     hudText('K', cK, y0 + f(45), 10, '#8d8668', 'right', 400);
@@ -2735,9 +2739,11 @@ function drawBoard() {
       ctx.globalAlpha = r[7] ? 1 : 0.5;     // knocked out: dimmed
       drawInsignia(ctx, tm, r[6], x0 + f(22), y, f(15));
       // clip long names short of the score column
-      ctx.save(); ctx.beginPath(); ctx.rect(x0 + f(34), y - rowH / 2, cS - f(50) - (x0 + f(34)), rowH); ctx.clip();
+      ctx.save(); ctx.beginPath(); ctx.rect(x0 + f(34), y - rowH / 2, cL - f(12) - (x0 + f(34)), rowH); ctx.clip();
       hudText(r[2], x0 + f(40), y, 13, mine ? '#fff6c8' : '#e8e0c0', 'left', mine ? 600 : 400);
       ctx.restore();
+      // an ally's logistics load (the server only sends your own side's)
+      if (r[8] >= 0) drawLogiRing(ctx, cL, y, f(6), f(2.5), r[8] / logiLimit());
       hudText(fmt(r[3]), cS, y, 13, '#e8e0c0', 'right', 400);
       hudText(String(r[4]), cK, y, 13, '#e8e0c0', 'right', 400);
       hudText(String(r[5]), cD, y, 13, '#e8e0c0', 'right', 400);
