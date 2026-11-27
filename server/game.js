@@ -18,6 +18,8 @@ const ARMOR = require('../shared/armor.js');
 // Overmatch: a round more than OVERMATCH times the plate's thickness in calibre never ricochets.
 // Rockets (shaped charges) never ricochet.
 const RICOCHET_DEG = 70, OVERMATCH = 3, PEN_SPREAD = 0.1, NONPEN_DMG = 0;
+// APCR rounds: more penetration (APCR_PEN in armor.js) but this much of AP's damage
+const APCR_DMG = 0.75;
 const MG_PEN = { mg34: 8, dt: 8, breda38: 8, m1919: 8, besa: 8, dshk: 20, m2hb: 20 };   // MG penetration in mm
 const MG_CAL = { dshk: 12.7, m2hb: 12.7 };                                               // MG calibre (default 7.9)
 {
@@ -159,6 +161,10 @@ function createGame(opts = {}) {
     gunReload(i) { const g = this.cls.guns[i]; return this.reloadT * g.reload * RELOAD_MULT[g.kind]; }
     initGuns() {
       this.cds = this.cls.guns.map(() => 0);
+      const load = ARMOR.ammoOf(this.clsId);
+      this.ammoAP = load.total - load.apcr; this.ammoAPCR = load.apcr;
+      if (this.ammoSel !== 'apcr' || !this.ammoAPCR) this.ammoSel = 'ap';
+      this.ammoNext = this.ammoSel;
       this.ammo = this.cls.guns.map(g => g.clip);          // rounds left in the magazine (magazine guns)
       this.magLoad = this.cls.guns.map(() => false);       // true while changing magazines
       this.wasFiring = false;
@@ -256,8 +262,36 @@ function createGame(opts = {}) {
       this.invuln = 0;
       ev({ e: 'f', id: this.id, g: -1 - i, x: r1(mx), y: r1(my), a: r3(fa), k: KINDS.indexOf('mg'), b: 0, r: r1(r) });
     }
+    // main gun shells are counted; everything else (MGs, rockets on other guns) is unlimited
+    usesAmmo(i) { return i === 0 && this.cls.guns[0].kind === 'shell'; }
+    hasAmmo(i) { return !this.usesAmmo(i) || this.ammoAP + this.ammoAPCR > 0; }
+    // take a round of the loaded type (the other one if it has run out); returns 'ap' | 'apcr' | null
+    takeRound(i) {
+      if (!this.usesAmmo(i)) return 'ap';
+      const left = s => (s === 'apcr' ? this.ammoAPCR : this.ammoAP);
+      const use = left(this.ammoSel) > 0 ? this.ammoSel : left(this.ammoSel === 'ap' ? 'apcr' : 'ap') > 0 ? (this.ammoSel === 'ap' ? 'apcr' : 'ap') : null;
+      if (use === 'apcr') this.ammoAPCR--; else if (use === 'ap') this.ammoAP--;
+      return use;
+    }
+    // a reload starts: the queued type goes in (or whatever is left if that type has run out)
+    chamberNext() {
+      const left = s => (s === 'apcr' ? this.ammoAPCR : this.ammoAP);
+      this.ammoSel = left(this.ammoNext) > 0 ? this.ammoNext : left(this.ammoSel) > 0 ? this.ammoSel : this.ammoAP > 0 ? 'ap' : 'apcr';
+      if (!left(this.ammoNext)) this.ammoNext = this.ammoSel;
+    }
+    // second press of a queued type: clear the breech (the round goes back to the rack) and load it now
+    forceReload() {
+      const g = this.cls.guns[0], left = this.ammoNext === 'apcr' ? this.ammoAPCR : this.ammoAP;
+      if (!this.usesAmmo(0) || !left || this.ammoNext === this.ammoSel) return;
+      this.ammoSel = this.ammoNext;
+      this.cds[0] = this.gunReload(0);
+      if (g.clip) { this.ammo[0] = 0; this.magLoad[0] = true; }
+    }
     fire(i) {
       const g = this.cls.guns[i], r = this.r;
+      const round = this.takeRound(i);
+      if (!round) return;
+      const apcr = round === 'apcr';
       const m = this.muzzle(i);
       // firing on the move costs accuracy
       const moving = clamp(Math.hypot(this.vx, this.vy) / this.speed, 0, 1);
@@ -268,9 +302,9 @@ function createGame(opts = {}) {
       bullets.push({
         id: nextId++, x: m.x, y: m.y, a: fa,
         vx: Math.cos(fa) * v0 + this.vx * 0.2, vy: Math.sin(fa) * v0 + this.vy * 0.2,
-        r: Math.max(3, g.w * r * 0.5 * g.size), dmg: this.bDmg * g.dmg * DMG_MULT[g.kind], hp: this.bPen * g.pen,
+        r: Math.max(3, g.w * r * 0.5 * g.size), dmg: this.bDmg * g.dmg * DMG_MULT[g.kind] * (apcr ? APCR_DMG : 1), hp: this.bPen * g.pen,
         team: this.team, owner: this, life: 1.45 * g.range * (rocket ? 1.25 : 1), kind: g.kind,
-        pen: (i === 0 && ARMOR.penOf(this.clsId)) || (g.kind === 'mg' ? 8 : 40), cal: g.mm || (g.kind === 'mg' ? 7.9 : 20),
+        pen: (i === 0 && (apcr ? ARMOR.apcrPenOf(this.clsId) : ARMOR.penOf(this.clsId))) || (g.kind === 'mg' ? 8 : 40), cal: g.mm || (g.kind === 'mg' ? 7.9 : 20),
         splash: g.splash * 40 * (r / 24), accel: rocket ? spd * 2.6 : 0, maxSpd: spd * 1.15, hits: [],
       });
       const imp = g.recoil * (g.kind === 'mg' ? 8 : 30) / this.cls.size;
@@ -357,11 +391,11 @@ function createGame(opts = {}) {
           // breech closes / fresh magazine seated (not between rounds of a magazine)
           if (i === 0 && loading && g.kind !== 'mg' && (!g.clip || this.magLoad[i])) pev(this, { e: 'rd' });
           if (g.clip && this.magLoad[i]) { this.ammo[i] = g.clip; this.magLoad[i] = false; }
-          if (firing) {
+          if (firing && this.hasAmmo(i)) {
             this.fire(i);
-            if (!g.clip) this.cds[i] = Math.max(0, this.cds[i] + this.gunReload(i));
+            if (!g.clip) { this.cds[i] = Math.max(0, this.cds[i] + this.gunReload(i)); if (this.usesAmmo(i)) this.chamberNext(); }
             else if (--this.ammo[i] > 0) this.cds[i] = Math.max(0, this.cds[i] + g.cycle);
-            else { this.cds[i] = this.gunReload(i); this.magLoad[i] = true; }      // empty: change magazines
+            else { this.cds[i] = this.gunReload(i); this.magLoad[i] = true; if (this.usesAmmo(i)) this.chamberNext(); }   // empty: change magazines
           } else this.cds[i] = 0;
         }
       }
@@ -802,8 +836,8 @@ function createGame(opts = {}) {
   // The best place for t to put a round into e from where t stands: of the hull faces it can see (front,
   // the side facing it, rear), the one where penetration / effective armour is highest. ratio >= 1: should
   // penetrate; 0: would ricochet.
-  function weakSpot(t, e) {
-    const pen = ARMOR.penOf(t.clsId) || 40, cal = t.cls.guns[0].mm || 20, rocket = t.cls.guns[0].kind === 'rocket';
+  function weakSpot(t, e, penMm) {
+    const pen = penMm || ARMOR.penOf(t.clsId) || 40, cal = t.cls.guns[0].mm || 20, rocket = t.cls.guns[0].kind === 'rocket';
     const c = Math.cos(e.hullA), s = Math.sin(e.hullA);
     const lx = (t.x - e.x) * c + (t.y - e.y) * s, ly = -(t.x - e.x) * s + (t.y - e.y) * c;   // t in e's frame
     const sd = ly >= 0 ? 1 : -1;
@@ -874,7 +908,14 @@ function createGame(opts = {}) {
     };
 
     let holdFace = false, spot = null;
-    if (e) spot = weakSpot(t, e);
+    if (e) {
+      spot = weakSpot(t, e);
+      t.ammoNext = 'ap';
+      if (spot.ratio < 1 && t.ammoAPCR > 0) {
+        const s2 = weakSpot(t, e, ARMOR.apcrPenOf(t.clsId));
+        if (s2.ratio >= 1) { spot = s2; t.ammoNext = 'apcr'; }
+      }
+    }
     if (ai.retreat) {
       const rx = rear.x - t.x, ry = rear.y - t.y, rd = Math.hypot(rx, ry) || 1;
       mx = rx / rd; my = ry / rd;
@@ -1284,6 +1325,12 @@ function createGame(opts = {}) {
           for (const k of tanks) if (k.client && k.team === t.team) pev(k, mk);
         }
         break;
+      case 'ammo':
+        if (t && t.alive && (m.s === 'ap' || m.s === 'apcr')) {
+          if (m.s === t.ammoNext && m.s !== t.ammoSel) t.forceReload();
+          else t.ammoNext = m.s;
+        }
+        break;
       case 'look':
         client.lookX = num(m.x, 0, WORLD, CENTER); client.lookY = num(m.y, 0, WORLD, CENTER);
         break;
@@ -1351,6 +1398,8 @@ function createGame(opts = {}) {
         // reload progress; a magazine gun only shows it while changing magazines (am = rounds left)
         rl: !t.alive ? 0 : t.cls.guns[0].clip ? (t.magLoad[0] ? r2(clamp(t.cds[0] / t.gunReload(0), 0, 1)) : 0) : r2(clamp(t.cds[0] / t.gunReload(0), 0, 1)),
         am: t.cls.guns[0].clip ? t.ammo[0] : undefined,
+        // main gun ammo: AP left, APCR left, which is loaded (0 AP, 1 APCR)
+        ap: t.ammoAP, ar: t.ammoAPCR, as: t.ammoSel === 'apcr' ? 1 : 0, aq: t.ammoNext === 'apcr' ? 1 : 0,
         mb: t.cls.mgs ? t.mgBear.reduce((m, b, i) => m | (b ? 1 << i : 0), 0) : 0,
         // MG rounds left, and belt-change progress (1 = just started, 0 = ready)
         ma: t.cls.mgs ? t.mgAmmo : 0,

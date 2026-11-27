@@ -166,6 +166,8 @@ addEventListener('keydown', e => {
   if (k === 'm' && !e.repeat) { Sound.toggle(); bigMessage(Sound.muted ? 'Sound OFF' : 'Sound ON', 1.2); }
   if (SIGHT_ENABLED && k === 'shift' && !e.repeat) setSight(!view2.sight);
   if (k === 't' && !e.repeat) switchSides();
+  if (k === '1' && !e.repeat) setAmmo('ap');
+  if (k === '2' && !e.repeat) setAmmo('apcr');
   // minimap size: + / - (main keyboard or numpad)
   if (k === '+' || k === '=') setMinimapScale(minimapScale * 1.15);
   if (k === '-' || k === '_') setMinimapScale(minimapScale / 1.15);
@@ -1806,9 +1808,19 @@ function drawTankWorld(t) {
 function drawLabels(t) {
   const isMe = you && t.id === you.id;
   const ally = you && t.team === you.team;
-  const y = t.y - t.r * 1.45 - 6;
+  const y0 = t.y - t.r * 1.45 - 6;
   if (!you || ally) {   // enemy crews stay anonymous
     const fs = Math.round(15 + t.r * 0.12);
+    // you and your allies: the vehicle as a small subtitle under the name (the name moves up to make room)
+    const sub = you && ally && t.cls ? t.cls.name : null, ss = Math.round(fs * 0.62);
+    const y = sub ? y0 - ss - 1 : y0;
+    if (sub) {
+      ctx.font = `400 ${ss}px Oswald, Impact, sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.7)'; ctx.lineJoin = 'round';
+      ctx.strokeText(sub, t.x, y0);
+      ctx.fillStyle = 'rgba(232,226,200,0.85)'; ctx.fillText(sub, t.x, y0);
+    }
     ctx.font = `600 ${fs}px Oswald, Impact, sans-serif`;
     const tw = ctx.measureText(t.name).width;
     const tx = t.x + 9;   // shift right to make room for the insignia
@@ -2220,7 +2232,7 @@ function drawHUD() {
   if (you && state === 'play') {
     const cls = clsByIdx(you.c);
     const by = H - 64;   // anchor for the capture-status readout below
-    if (autofire) hudText('AUTOFIRE', cx, H - 22, 13, '#f6e27a');
+    if (autofire) hudText('AUTOFIRE', cx, H - 62, 13, '#f6e27a');
 
     const me = myTank();
     // ---- capture status while standing in a zone ----
@@ -2282,7 +2294,8 @@ function drawHUD() {
         ctx.fillStyle = rl > 0 ? '#e6a03c' : '#7fd46a';
         ctx.fillRect(rx, ry, bw * (1 - rl), bh);
       }
-      if (rl > 0) hudText(clip ? 'RELOADING' : 'LOADING', mx, ry + bh + 11, 11, '#e6a03c', 'center', 400);
+      if (you.ap === 0 && you.ar === 0) hudText('OUT OF AMMO', mx, ry + bh + 11, 11, '#ff7a5c', 'center', 600);
+      else if (rl > 0) hudText(clip ? 'RELOADING' : 'LOADING', mx, ry + bh + 11, 11, '#e6a03c', 'center', 400);
     }
     if (me) {
       // ---- aim line: from the main gun's muzzle to the cursor ----
@@ -2509,6 +2522,7 @@ function openDeployMap() {
   }
 }
 function closeDeployMap() {
+  armorTipHide();
   dmap.open = false; dmap.sel = null; dmap.hover = null;
   ui.death.classList.add('hidden'); ui.panel.classList.add('hidden'); ui.mapbar.classList.add('hidden');
   canvas.style.cursor = '';
@@ -2524,6 +2538,7 @@ function showDeployPanel() {
   ui.panel.classList.remove('hidden');
 }
 function backToMap() {
+  armorTipHide();
   dmap.stage = 'map'; dmap.sel = null;
   ui.panel.classList.add('hidden');
   ui.mapbar.classList.remove('hidden');
@@ -2931,8 +2946,66 @@ function pickerDetail(el, id) {
   const left = poolArr(c.faction, dmap.sel)[c.cat];
   el.querySelector('.vdetail').innerHTML = `<b>${escapeHtml(c.name)}</b> <span class="vrole">${CATS[c.cat].name} · ${left} in reserve</span>`;
 }
+// ---- armour card: hold the mouse on a vehicle in the picker for a moment ----
+const ARMOR_TIP_DELAY = 1000;
+const armorTip = document.getElementById('armortip');
+let armorTipT = null;
+// colour for an effective thickness: thin red -> orange -> yellow -> thick green
+function armorColor(mm) {
+  const stops = [[0, [200, 60, 45]], [40, [220, 120, 50]], [80, [225, 195, 70]], [130, [140, 200, 90]], [200, [90, 190, 120]]];
+  let i = 1; while (i < stops.length - 1 && mm > stops[i][0]) i++;
+  const [m0, c0] = stops[i - 1], [m1, c1] = stops[i], f = clamp((mm - m0) / (m1 - m0), 0, 1);
+  return `rgb(${c0.map((v, k) => Math.round(v + (c1[k] - v) * f)).join(',')})`;
+}
+function armorTipSoon(tile, id) {
+  armorTipHide();
+  armorTipT = setTimeout(() => showArmorTip(tile, id), ARMOR_TIP_DELAY);
+}
+function armorTipHide() { clearTimeout(armorTipT); armorTipT = null; armorTip.classList.add('hidden'); }
+function showArmorTip(tile, id) {
+  const A = window.ZARMOR, c = CLASSES[id];
+  if (!A || !c || !A.armorOf(id)) return;
+  const [front, side, rear] = A.armorOf(id), slope = A.slopeOf(id);
+  const effFront = Math.round(front / Math.cos(slope * Math.PI / 180));
+  armorTip.querySelector('.atname').textContent = c.name;
+  const apcr = A.ammoOf(id).apcr;
+  armorTip.querySelector('.atgun').innerHTML = `Gun: <b>${A.penOf(id)} mm</b> AP` + (apcr ? ` · <b>${A.apcrPenOf(id)} mm</b> APCR` : '');
+  // top-down hull, front up, each side a plate coloured by its effective armour
+  const cv = armorTip.querySelector('canvas'), g = cv.getContext('2d'), S = 2;     // drawn at 2x for crispness
+  g.setTransform(S, 0, 0, S, 0, 0); g.clearRect(0, 0, cv.width, cv.height);
+  const cx = 110, cy = 92, k = 52 / Math.max(c.hull[0], c.hull[1] * 1.2);
+  const L = c.hull[0] * k, Wd = c.hull[1] * k, x0 = cx - Wd / 2, y0 = cy - L / 2, pw = 7;
+  g.fillStyle = 'rgba(231,220,177,0.08)'; g.fillRect(x0, y0, Wd, L);
+  const plate = (x, y, w, h, mm) => { g.fillStyle = armorColor(mm); g.fillRect(x, y, w, h); };
+  plate(x0, y0 - pw, Wd, pw, effFront);                // front
+  plate(x0, y0 + L, Wd, pw, rear);                     // rear
+  plate(x0 - pw, y0, pw, L, side); plate(x0 + Wd, y0, pw, L, side);   // sides
+  // a turret / casemate hint so the front reads at a glance
+  g.fillStyle = 'rgba(231,220,177,0.18)';
+  g.beginPath(); g.arc(cx, cy - L * 0.05, Wd * 0.28, 0, TAU); g.fill();
+  g.fillRect(cx - 1.5, y0 - pw - 10, 3, cy - L * 0.05 - (y0 - pw - 10));
+  const label = (txt, x, y, col, size = 13, align = 'center', weight = 600) => {
+    g.font = `${weight} ${size}px Oswald, Impact, sans-serif`; g.textAlign = align; g.textBaseline = 'middle';
+    g.lineWidth = 3; g.strokeStyle = 'rgba(0,0,0,0.8)'; g.strokeText(txt, x, y); g.fillStyle = col; g.fillText(txt, x, y);
+  };
+  label(`${effFront} mm`, cx, y0 - pw - 22, armorColor(effFront), 15);
+  if (slope) label(`${front} mm @ ${slope}°`, cx, y0 - pw - 37, '#a99f78', 10, 'center', 400);
+  label(`${rear} mm`, cx, y0 + L + pw + 14, armorColor(rear));
+  label(`${side}`, x0 - pw - 6, cy, armorColor(side), 13, 'right');
+  label(`${side}`, x0 + Wd + pw + 6, cy, armorColor(side), 13, 'left');
+  label('FRONT', cx, y0 + 9, 'rgba(231,220,177,0.45)', 8, 'center', 400);
+  label('REAR', cx, y0 + L - 9, 'rgba(231,220,177,0.45)', 8, 'center', 400);
+  // place it beside the tile, on whichever side has room
+  armorTip.classList.remove('hidden');
+  const r = tile.getBoundingClientRect(), w = armorTip.offsetWidth, h = armorTip.offsetHeight;
+  let x = r.left - w - 10; if (x < 8) x = Math.min(innerWidth - w - 8, r.right + 10);
+  armorTip.style.left = x + 'px';
+  armorTip.style.top = clamp(r.top + r.height / 2 - h / 2, 8, innerHeight - h - 8) + 'px';
+}
+
 function buildPicker(el, team) {
   if (!el) return;
+  armorTipHide();
   if (!CLASSES[selCls[team]] || CLASSES[selCls[team]].faction !== team || !CLASSES[selCls[team]].enabled) selCls[team] = START_CLASS[team];
   el.innerHTML = '<div class="vgroups"></div><div class="vdetail"></div>';
   const groups = el.querySelector('.vgroups'), grids = {};
@@ -2957,8 +3030,8 @@ function buildPicker(el, team) {
       el.querySelectorAll('.veh').forEach(v => v.classList.toggle('sel', v.dataset.id === id));
       pickerDetail(el, id);
     });
-    b.addEventListener('mouseenter', () => pickerDetail(el, id));
-    b.addEventListener('mouseleave', () => pickerDetail(el, selCls[team]));
+    b.addEventListener('mouseenter', () => { pickerDetail(el, id); armorTipSoon(b, id); });
+    b.addEventListener('mouseleave', () => { pickerDetail(el, selCls[team]); armorTipHide(); });
     grid.appendChild(b);
     drawPreview(b.querySelector('canvas'), id, team, 0);
   }
@@ -3043,7 +3116,44 @@ addEventListener('keydown', e => {
   if (state === 'play' || (state === 'dead' && dmap.open && dmap.stage === 'map')) { e.preventDefault(); openChat(); }
 });
 
+// ---- main gun ammo bar ----
+const ammoBar = document.getElementById('ammobar');
+const ammoBtn = { ap: ammoBar.querySelector('[data-a="ap"]'), apcr: ammoBar.querySelector('[data-a="apcr"]') };
+let ammoSig = '';
+function setAmmo(s) {
+  if (state !== 'play' || !you || !you.alive) return;
+  if (s === 'apcr' && !you.ar) { bigMessage('No APCR rounds for this gun', 1.2); return; }
+  send({ t: 'ammo', s });
+}
+// (a display only: switched with 1 / 2)
+function updateAmmoBar() {
+  const cls = you ? clsByIdx(you.c) : null;
+  const show = state === 'play' && you && you.alive && cls && cls.guns[0].kind === 'shell' && you.ap !== undefined;
+  ammoBar.classList.toggle('hidden', !show);
+  if (!show) { ammoSig = ''; return; }
+  // reload progress of the round going in (magazine guns: only while changing magazines)
+  const prog = you.rl > 0 ? Math.round((1 - you.rl) * 50) / 50 : 0;
+  const sig = [cls.id, you.ap, you.ar, you.as, you.aq, prog].join(',');
+  if (sig === ammoSig) return;
+  ammoSig = sig;
+  const A = window.ZARMOR;
+  for (const [s, b] of Object.entries(ammoBtn)) {
+    const n = s === 'ap' ? you.ap : you.ar, pen = A ? (s === 'ap' ? A.penOf(cls.id) : A.apcrPenOf(cls.id)) : null;
+    b.querySelector('.acount').textContent = n;
+    b.querySelector('.apen').innerHTML = pen ? `${pen}<small>mm</small>` : '';
+    const loaded = (s === 'apcr') === !!you.as, queued = (s === 'apcr') === !!you.aq && !loaded;
+    b.classList.toggle('sel', loaded);
+    b.classList.toggle('queued', queued);
+    b.classList.toggle('loading', loaded && prog > 0);
+    b.style.setProperty('--p', loaded ? prog : 0);
+    b.classList.toggle('empty', !n);
+  }
+  // a gun that never had APCR: hide that button
+  ammoBtn.apcr.style.display = A && A.ammoOf(cls.id).apcr ? '' : 'none';
+}
+
 function updateUI(dt) {
+  updateAmmoBar();
   updateChat();
   document.body.classList.toggle('end-open', !!phase);   // hides the deploy-screen panels behind the end screen
   if (state === 'dead') {
