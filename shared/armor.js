@@ -41,7 +41,7 @@ const VEHICLES = {
   // ---- Germany ----
   pz2c: { // 20mm KwK 30
     armor: [30, 15, 15],    slope: 10, pen: 23, ammo: 180, apcr: 30, logi: 0, cal: 20,
-    speed: 1.22, hp: 0.7, traverse: 4.5, fov: 1.5, ram: 1, capture: 2,
+    speed: 1.22, hp: 0.8, traverse: 4.5, fov: 1.5, ram: 1, capture: 2,
     gun: { reload: 2.3, dmg: 0.38, spd: 1.1, pen: 0.6, spread: 0.06, range: 1, recoil: 0.3, clip: 10, cycle: 0.22 },
   },
   pz38t: { // 37mm KwK 38(t)
@@ -51,7 +51,7 @@ const VEHICLES = {
   },
   luchs: { // 20mm KwK 38
     armor: [30, 20, 20],    slope: 15, pen: 25, ammo: 330, apcr: 40, logi: 0, cal: 20,
-    speed: 1.35, hp: 0.75, traverse: 4.6, fov: 1.5, ram: 1, capture: 2,
+    speed: 1.35, hp: 0.8, traverse: 4.6, fov: 1.5, ram: 1, capture: 2,
     gun: { reload: 2.3, dmg: 0.4, spd: 1.15, pen: 0.62, spread: 0.06, range: 1, recoil: 0.3, clip: 10, cycle: 0.13 },
   },
   pz3: { // 50mm KwK 39 L/60 (spaced front)
@@ -66,17 +66,17 @@ const VEHICLES = {
   },
   hetzer: { // 75mm PaK 39 L/48
     armor: [60, 20, 8],     slope: 60, pen: 91, ammo: 41, apcr: 6, logi: 45, cal: 75,
-    speed: 1, hp: 1, traverse: 1.9, fov: 1.2, ram: 1,
+    speed: 1, hp: 1.1, traverse: 1.9, fov: 1.2, ram: 1,
     gun: { reload: 1.15, dmg: 1.4, spd: 1.25, pen: 1.3, spread: 0.03, range: 1.2, recoil: 1.5 },
   },
   stug: { // 75mm StuK 40 L/48
     armor: [80, 30, 50],    slope: 10, pen: 91, ammo: 54, apcr: 6, logi: 60, cal: 75,
-    speed: 1, hp: 1.15, traverse: 2, fov: 1.2, ram: 1,
+    speed: 1, hp: 1.1, traverse: 2, fov: 1.2, ram: 1,
     gun: { reload: 1.25, dmg: 1.7, spd: 1, pen: 1.3, spread: 0.03, range: 1, recoil: 1.6 },
   },
   jgpz4: { // 75mm PaK 42 L/70
     armor: [80, 40, 20],    slope: 50, pen: 124, ammo: 55, apcr: 8, logi: 90, cal: 75,
-    speed: 0.95, hp: 1.2, traverse: 1.9, fov: 1.2, ram: 1,
+    speed: 0.95, hp: 1.1, traverse: 1.9, fov: 1.2, ram: 1,
     gun: { reload: 1.2, dmg: 1.6, spd: 1.55, pen: 1.5, spread: 0.03, range: 1.45, recoil: 1.8 },
   },
   sdkfz: { // (switched off)
@@ -85,7 +85,7 @@ const VEHICLES = {
   },
   tiger: { // 88mm KwK 36 L/56
     armor: [100, 80, 80],   slope: 10, pen: 110, ammo: 92, apcr: 8, logi: 300, cal: 88,
-    speed: 0.82, hp: 1.6, traverse: 1.6, fov: 1, ram: 1.4, steer: 'neutral',
+    speed: 0.82, hp: 1.7, traverse: 1.6, fov: 1, ram: 1.4, steer: 'neutral',
     gun: { reload: 1.45, dmg: 2.1, spd: 1.15, pen: 1.6, spread: 0.03, range: 1, recoil: 2 },
   },
   panther: { // 75mm KwK 42 L/70
@@ -95,17 +95,17 @@ const VEHICLES = {
   },
   jagdpanther: { // 88mm PaK 43 L/71
     armor: [80, 50, 40],    slope: 55, pen: 185, ammo: 57, apcr: 6, logi: 240, cal: 88,
-    speed: 1, hp: 1.3, traverse: 1.8, fov: 1.4, ram: 1, steer: 'neutral',
+    speed: 1, hp: 1.5, traverse: 1.8, fov: 1.4, ram: 1, steer: 'neutral',
     gun: { reload: 1.3, dmg: 2.3, spd: 1.7, pen: 1.8, spread: 0.03, range: 1.5, recoil: 2 },
   },
   ferdinand: { // 88mm PaK 43 L/71
     armor: [200, 80, 80],   slope: 10, pen: 185, ammo: 50, apcr: 6, logi: 360, cal: 88,
-    speed: 0.76, hp: 1.45, traverse: 1.1, fov: 1.4, ram: 1, steer: 'neutral',
+    speed: 0.76, hp: 1.5, traverse: 1.1, fov: 1.4, ram: 1, steer: 'neutral',
     gun: { reload: 1.8, dmg: 2.7, spd: 1.75, pen: 2, spread: 0.03, range: 1.6, recoil: 2.4 },
   },
   brummbaer: { // 150mm StuH 43 (shaped charge)
     armor: [100, 50, 20],   slope: 30, pen: 120, ammo: 38, apcr: 0, logi: 180, cal: 150,
-    speed: 0.85, hp: 1.55, traverse: 1.6, fov: 1, ram: 1,
+    speed: 0.85, hp: 1.5, traverse: 1.6, fov: 1, ram: 1,
     gun: { reload: 2, dmg: 2.6, spd: 0.62, pen: 2.2, spread: 0.03, range: 0.95, recoil: 3, splash: 1.6 },
   },
   wirbelwind: { // (switched off)
@@ -118,13 +118,13 @@ const VEHICLES = {
   },
   tiger2: { // 88mm KwK 43 L/71
     armor: [150, 80, 80],   slope: 50, pen: 185, ammo: 86, apcr: 6, logi: 420, cal: 88,
-    speed: 0.74, hp: 1.95, traverse: 1.4, fov: 1, ram: 1.7, steer: 'neutral',
-    gun: { reload: 1.5, dmg: 2.5, spd: 1.35, pen: 1.95, spread: 0.03, range: 1.3, recoil: 2.2 },
+    speed: 0.74, hp: 1.7, traverse: 1.4, fov: 1, ram: 1.7, steer: 'neutral',
+    gun: { reload: 1.9, dmg: 2.5, spd: 1.35, pen: 1.95, spread: 0.03, range: 1.3, recoil: 2.2 },
   },
   jagdtiger: { // 128mm PaK 44 L/55
     armor: [150, 80, 80],   slope: 50, pen: 212, ammo: 40, apcr: 4, logi: 480, cal: 128,
-    speed: 0.66, hp: 1.9, traverse: 0.95, fov: 1, ram: 1, steer: 'neutral',
-    gun: { reload: 2.1, dmg: 3.7, spd: 1.75, pen: 2.6, spread: 0.03, range: 1.75, recoil: 3, splash: 1.4 },
+    speed: 0.66, hp: 1.5, traverse: 0.95, fov: 1, ram: 1, steer: 'neutral',
+    gun: { reload: 2.6, dmg: 3.7, spd: 1.75, pen: 2.6, spread: 0.03, range: 1.75, recoil: 3, splash: 1.4 },
   },
   sturmtiger: { // (switched off)
     speed: 0.72, hp: 1.9, traverse: 1.3, fov: 1, ram: 1, steer: 'neutral',
@@ -147,12 +147,12 @@ const VEHICLES = {
   },
   bt7: { // 45mm 20-K
     armor: [22, 13, 13],    slope: 20, pen: 43, ammo: 132, apcr: 16, logi: 0, cal: 45,
-    speed: 1.4, hp: 0.75, traverse: 4, fov: 1.5, ram: 1, capture: 2,
+    speed: 1.4, hp: 0.8, traverse: 4, fov: 1.5, ram: 1, capture: 2,
     gun: { reload: 0.46, dmg: 0.56, spd: 1.12, pen: 0.8, spread: 0.05, range: 1, recoil: 0.5 },
   },
   t28: { // 76mm KT-28 (short)
     armor: [30, 20, 20],    slope: 15, pen: 35, ammo: 70, apcr: 0, logi: 30, cal: 76,
-    speed: 0.88, hp: 1.15, traverse: 2.6, fov: 1.2, ram: 1,
+    speed: 0.88, hp: 1, traverse: 2.6, fov: 1.2, ram: 1,
     gun: { reload: 1.1, dmg: 1.1, spd: 0.95, pen: 0.95, spread: 0.03, range: 1, recoil: 1.2 },
   },
   t34: { // 76mm F-34
@@ -162,27 +162,27 @@ const VEHICLES = {
   },
   kv1s: { // 76mm ZiS-5
     armor: [75, 60, 60],    slope: 25, pen: 61, ammo: 114, apcr: 10, logi: 150, cal: 76,
-    speed: 0.92, hp: 1.3, traverse: 2.4, fov: 1, ram: 1.2,
+    speed: 0.92, hp: 1.7, traverse: 2.4, fov: 1, ram: 1.2,
     gun: { reload: 1, dmg: 1.35, spd: 1.1, pen: 1.15, spread: 0.03, range: 1, recoil: 1 },
   },
   su100: { // 100mm D-10S
     armor: [75, 45, 45],    slope: 50, pen: 162, ammo: 33, apcr: 4, logi: 180, cal: 100,
-    speed: 0.98, hp: 1.45, traverse: 1.6, fov: 1.4, ram: 1,
+    speed: 0.98, hp: 1.5, traverse: 1.6, fov: 1.4, ram: 1,
     gun: { reload: 1.75, dmg: 3, spd: 1.8, pen: 2.3, spread: 0.03, range: 1.7, recoil: 2.6 },
   },
   su122: { // 122mm M-30S (shaped charge)
     armor: [45, 45, 40],    slope: 50, pen: 100, ammo: 40, apcr: 0, logi: 90, cal: 122,
-    speed: 1, hp: 1.12, traverse: 2, fov: 1, ram: 1,
+    speed: 1, hp: 1.5, traverse: 2, fov: 1, ram: 1,
     gun: { reload: 1.55, dmg: 1.9, spd: 0.8, pen: 1.5, spread: 0.03, range: 1, recoil: 2, splash: 1 },
   },
   su76: { // 76mm ZiS-3
     armor: [25, 15, 15],    slope: 30, pen: 61, ammo: 60, apcr: 6, logi: 30, cal: 76,
-    speed: 1.12, hp: 0.85, traverse: 2.4, fov: 1.2, ram: 1,
+    speed: 1.12, hp: 1.1, traverse: 2.4, fov: 1.2, ram: 1,
     gun: { reload: 1.05, dmg: 1.3, spd: 1.3, pen: 1.2, spread: 0.03, range: 1.2, recoil: 1.4 },
   },
   t70: { // 45mm 20-K
     armor: [45, 15, 25],    slope: 30, pen: 43, ammo: 90, apcr: 12, logi: 0, cal: 45,
-    speed: 1.25, hp: 0.82, traverse: 4.2, fov: 1.5, ram: 1, capture: 2,
+    speed: 1.25, hp: 0.8, traverse: 4.2, fov: 1.5, ram: 1, capture: 2,
     gun: { reload: 0.42, dmg: 0.55, spd: 1.15, pen: 0.8, spread: 0.05, range: 1, recoil: 0.5 },
   },
   kv85: { // 85mm D-5T
@@ -192,17 +192,17 @@ const VEHICLES = {
   },
   t3485: { // 85mm ZiS-S-53
     armor: [45, 45, 45],    slope: 60, pen: 102, ammo: 56, apcr: 6, logi: 90, cal: 85,
-    speed: 1.1, hp: 1.1, traverse: 2.6, fov: 1.2, ram: 1,
+    speed: 1.1, hp: 1, traverse: 2.6, fov: 1.2, ram: 1,
     gun: { reload: 1.05, dmg: 1.35, spd: 1.45, pen: 1.4, spread: 0.03, range: 1.35, recoil: 1 },
   },
   su152: { // 152mm ML-20S
     armor: [75, 60, 60],    slope: 25, pen: 125, ammo: 20, apcr: 0, logi: 210, cal: 152,
-    speed: 0.82, hp: 1.55, traverse: 1.4, fov: 1, ram: 1,
+    speed: 0.82, hp: 1.5, traverse: 1.4, fov: 1, ram: 1,
     gun: { reload: 2, dmg: 3, spd: 0.85, pen: 2.3, spread: 0.03, range: 1, recoil: 3, splash: 1.4 },
   },
   su85: { // 85mm D-5S
     armor: [45, 45, 40],    slope: 50, pen: 102, ammo: 48, apcr: 6, logi: 75, cal: 85,
-    speed: 1, hp: 1.2, traverse: 1.7, fov: 1.2, ram: 1,
+    speed: 1, hp: 1.1, traverse: 1.7, fov: 1.2, ram: 1,
     gun: { reload: 1.45, dmg: 2.2, spd: 1.65, pen: 1.8, spread: 0.03, range: 1.55, recoil: 2 },
   },
   zsu37: { // (switched off)
@@ -215,12 +215,12 @@ const VEHICLES = {
   },
   is2: { // 122mm D-25T
     armor: [120, 90, 60],   slope: 60, pen: 142, ammo: 28, apcr: 0, logi: 300, cal: 122,
-    speed: 0.78, hp: 1.95, traverse: 1.5, fov: 1, ram: 1.7,
+    speed: 0.78, hp: 1.7, traverse: 1.5, fov: 1, ram: 1.7,
     gun: { reload: 1.85, dmg: 3, spd: 1.25, pen: 2.1, spread: 0.03, range: 1, recoil: 2.6 },
   },
   isu152: { // 152mm ML-20S
     armor: [90, 90, 60],    slope: 30, pen: 125, ammo: 21, apcr: 0, logi: 270, cal: 152,
-    speed: 0.72, hp: 2, traverse: 1.2, fov: 1, ram: 1,
+    speed: 0.72, hp: 1.5, traverse: 1.2, fov: 1, ram: 1,
     gun: { reload: 2.6, dmg: 4.4, spd: 0.9, pen: 3, spread: 0.03, range: 1, recoil: 3.4, splash: 1.9 },
   },
   m17: { // (switched off)
@@ -235,22 +235,22 @@ const VEHICLES = {
   // ---- Italy (not playable yet) ----
   l640: { // 20mm Breda 35
     armor: [30, 15, 15],    slope: 10, pen: 24, ammo: 296, apcr: 30, cal: 20,
-    speed: 1.15, hp: 0.68, traverse: 4.2, fov: 1, ram: 1, capture: 2,
+    speed: 1.15, hp: 0.8, traverse: 4.2, fov: 1, ram: 1, capture: 2,
     gun: { reload: 2, dmg: 0.38, spd: 1.1, pen: 0.55, spread: 0.06, range: 1, recoil: 0.3, clip: 8, cycle: 0.3 },
   },
   m1340: { // 47mm 47/32
     armor: [30, 25, 25],    slope: 15, pen: 43, ammo: 104, apcr: 10, cal: 47,
-    speed: 0.92, hp: 0.9, traverse: 3, fov: 1, ram: 1,
+    speed: 0.92, hp: 1, traverse: 3, fov: 1, ram: 1,
     gun: { reload: 0.6, dmg: 0.75, spd: 1.1, pen: 0.85, spread: 0.03, range: 1, recoil: 0.7 },
   },
   p2640: { // 75mm 75/34
     armor: [50, 45, 40],    slope: 40, pen: 70, ammo: 65, apcr: 6, cal: 75,
-    speed: 0.95, hp: 1.25, traverse: 2.6, fov: 1, ram: 1,
+    speed: 0.95, hp: 1.7, traverse: 2.6, fov: 1, ram: 1,
     gun: { reload: 1, dmg: 1.2, spd: 1.1, pen: 1.05, spread: 0.03, range: 1, recoil: 1.2 },
   },
   sem7518: { // 75mm 75/18 (shaped charge)
     armor: [50, 25, 25],    slope: 20, pen: 70, ammo: 44, apcr: 0, cal: 75,
-    speed: 0.95, hp: 1, traverse: 2, fov: 1, ram: 1,
+    speed: 0.95, hp: 1.1, traverse: 2, fov: 1, ram: 1,
     gun: { reload: 1.2, dmg: 1.3, spd: 0.85, pen: 1.2, spread: 0.03, range: 1, recoil: 1.4, splash: 0.6 },
   },
 
@@ -262,39 +262,39 @@ const VEHICLES = {
   },
   m4sherman: { // 75mm M3
     armor: [51, 38, 38],    slope: 56, pen: 76, ammo: 97, apcr: 6, cal: 75,
-    speed: 1.05, hp: 1.1, traverse: 3.4, fov: 1, ram: 1,
+    speed: 1.05, hp: 1, traverse: 3.4, fov: 1, ram: 1,
     gun: { reload: 1, dmg: 1.15, spd: 1.1, pen: 1, spread: 0.03, range: 1, recoil: 1 },
   },
   m26: { // 90mm M3
     armor: [102, 76, 51],   slope: 46, pen: 147, ammo: 70, apcr: 6, cal: 90,
-    speed: 0.92, hp: 1.6, traverse: 2.2, fov: 1, ram: 1,
+    speed: 0.92, hp: 1.7, traverse: 2.2, fov: 1, ram: 1,
     gun: { reload: 1.35, dmg: 2, spd: 1.45, pen: 1.75, spread: 0.03, range: 1.3, recoil: 2 },
   },
   m10: { // 3-inch M7
     armor: [51, 19, 19],    slope: 55, pen: 99, ammo: 54, apcr: 6, cal: 76,
-    speed: 1.02, hp: 1.05, traverse: 1.7, fov: 1.3, ram: 1,
+    speed: 1.02, hp: 1.1, traverse: 1.7, fov: 1.3, ram: 1,
     gun: { reload: 1.2, dmg: 1.6, spd: 1.45, pen: 1.5, spread: 0.03, range: 1.4, recoil: 1.6 },
   },
 
   // ---- United Kingdom (not playable yet) ----
   tetrarch: { // 2-pounder
     armor: [16, 14, 14],    slope: 10, pen: 52, ammo: 50, apcr: 8, cal: 40,
-    speed: 1.28, hp: 0.72, traverse: 4.3, fov: 1, ram: 1, capture: 2,
+    speed: 1.28, hp: 0.8, traverse: 4.3, fov: 1, ram: 1, capture: 2,
     gun: { reload: 0.46, dmg: 0.6, spd: 1.2, pen: 0.85, spread: 0.05, range: 1, recoil: 0.5 },
   },
   cromwell: { // 75mm OQF
     armor: [76, 32, 32],    slope: 0,  pen: 68, ammo: 64, apcr: 6, cal: 75,
-    speed: 1.3, hp: 1.1, traverse: 3.2, fov: 1, ram: 1, steer: 'neutral',
+    speed: 1.3, hp: 1, traverse: 3.2, fov: 1, ram: 1, steer: 'neutral',
     gun: { reload: 1, dmg: 1.15, spd: 1.1, pen: 1, spread: 0.03, range: 1, recoil: 1 },
   },
   churchill: { // 75mm OQF
     armor: [152, 95, 50],   slope: 0,  pen: 68, ammo: 84, apcr: 6, cal: 75,
-    speed: 0.7, hp: 1.9, traverse: 2.4, fov: 1, ram: 1.5, steer: 'neutral',
+    speed: 0.7, hp: 1.7, traverse: 2.4, fov: 1, ram: 1.5, steer: 'neutral',
     gun: { reload: 1, dmg: 1.15, spd: 1.1, pen: 1, spread: 0.03, range: 1, recoil: 1 },
   },
   achilles: { // 17-pounder
     armor: [51, 19, 19],    slope: 55, pen: 171, ammo: 50, apcr: 8, cal: 76,
-    speed: 1.02, hp: 1.05, traverse: 1.7, fov: 1.4, ram: 1,
+    speed: 1.02, hp: 1.1, traverse: 1.7, fov: 1.4, ram: 1,
     gun: { reload: 1.4, dmg: 2.3, spd: 1.75, pen: 1.95, spread: 0.03, range: 1.55, recoil: 2 },
   },
 };
@@ -336,16 +336,17 @@ const apcrPenOf = id => (VEHICLES[id] && VEHICLES[id].pen ? VEHICLES[id].apcrPen
 const ammoOf = id => (VEHICLES[id] ? { total: VEHICLES[id].ammo || 60, apcr: VEHICLES[id].apcr || 0 } : { total: 60, apcr: 0 });
 
 // ---- components: hidden health pools inside every vehicle ----
+// disabled: switched off (never damaged, not shown, bots ignore it); delete the flag to bring it back.
 // hp: share of the vehicle's max hp; repair: seconds until a destroyed one works again (twice as fast inside
 // a capture zone your side holds or at your rear area). Where they sit and what hits them is in game.js (hitParts).
 const COMPONENTS = {
   tracks: { name: 'Tracks',     hp: 0.25, repair: 10 },   // destroyed: immobilised (the turret still works)
   engine: { name: 'Engine',     hp: 0.25, repair: 20 },   // destroyed: ENGINE_SPEED top speed, ENGINE_TURN hull turning
-  ammo:   { name: 'Ammo rack',  hp: 0.25, repair: 20, burst: 0.15, fx: 4 },   // destroyed: guns reload AMMO_RELOAD times slower
+  ammo:   { name: 'Ammo rack',  hp: 0.25, repair: 20, burst: 0.15, fx: 4 },
   fuel:   { name: 'Fuel tank',  hp: 0.20, repair: 15, burst: 0.12, fx: 4 },
 };
 const COMPONENT_IDS = Object.keys(COMPONENTS);
-const ENGINE_SPEED = 0.3, ENGINE_TURN = 0.5, AMMO_RELOAD = 2;
+const ENGINE_SPEED = 0.3, ENGINE_TURN = 0.5;
 // burst: share of the vehicle's max hp dealt once, on the hit that destroys the component (no damage over
 // time). fx: seconds of effect after it's destroyed: a fuel tank burns on the side that was hit, an ammo rack
 // cooks off, throwing sparks out of that side.
@@ -354,7 +355,7 @@ const ENGINE_SPEED = 0.3, ENGINE_TURN = 0.5, AMMO_RELOAD = 2;
 const LOGI_LIMIT = 600;
 const logiOf = id => (VEHICLES[id] ? VEHICLES[id].logi || 0 : 0);
 
-const ARMOR = { VEHICLES, MGS, COMPONENTS, COMPONENT_IDS, ENGINE_SPEED, ENGINE_TURN, AMMO_RELOAD, VEHICLE_DEFAULTS, GUN_DEFAULTS, statsOf, armorOf, penOf, slopeOf, APCR_PEN, apcrPenOf, ammoOf, LOGI_LIMIT, logiOf };
+const ARMOR = { VEHICLES, MGS, COMPONENTS, COMPONENT_IDS, ENGINE_SPEED, ENGINE_TURN, VEHICLE_DEFAULTS, GUN_DEFAULTS, statsOf, armorOf, penOf, slopeOf, APCR_PEN, apcrPenOf, ammoOf, LOGI_LIMIT, logiOf };
 if (typeof module !== 'undefined' && module.exports) module.exports = ARMOR;
 else root.ZARMOR = ARMOR;
 })(typeof self !== 'undefined' ? self : this);

@@ -175,7 +175,7 @@ function createGame(opts = {}) {
     }
     gunReload(i) {
       const g = this.cls.guns[i];
-      return this.reloadT * g.reload * RELOAD_MULT[g.kind] * (this.parts && this.parts.ammo.down > 0 ? ARMOR.AMMO_RELOAD : 1);
+      return this.reloadT * g.reload * RELOAD_MULT[g.kind];
     }
     // components (armor.js COMPONENTS): full health, all working
     resetParts() {
@@ -1016,7 +1016,7 @@ function createGame(opts = {}) {
       }
       // a heavy it can't get through anywhere: shoot its tracks (side hits break them even without
       // penetrating) to pin it down, while still working round toward its side and rear (below)
-      if (spot.ratio < 1 && isHeavy(e.cls) && e.parts && !(e.parts.tracks.down > 0)) {
+      if (spot.ratio < 1 && isHeavy(e.cls) && e.parts && !ARMOR.COMPONENTS.tracks.disabled && !(e.parts.tracks.down > 0)) {
         const tr = trackSpot(t, e);
         if (tr) { spot = { face: 'tracks', ratio: spot.ratio, x: tr.x, y: tr.y }; t.ammoNext = 'ap'; }
       }
@@ -1238,7 +1238,7 @@ function createGame(opts = {}) {
       else if (u < -0.35) parts.push('fuel', 'engine');     // the engine bay spans the back of the hull
       else if (u < 0.35) parts.push('ammo');
     }
-    for (const k of parts) partDamage(e, k, b.dmg, b.owner, hit, v);
+    for (const k of parts) if (!ARMOR.COMPONENTS[k].disabled) partDamage(e, k, b.dmg, b.owner, hit, v);
   }
   function partDamage(e, k, amt, src, at, v) {
     const p = e.parts[k];
@@ -1318,7 +1318,8 @@ function createGame(opts = {}) {
             : hit.face === 'rear' ? ['REAR HIT', '#ffb347'] : null;
           if (lbl && b.kind !== 'mg' && b.owner && b.owner.client) pev(b.owner, { e: 't', x: r1(b.x), y: r1(b.y - 10), text: lbl[0], c: lbl[1], s: 14 });
           if (res.out !== 'pen' && b.kind !== 'mg' && e.client) pev(e, { e: 't', x: r1(b.x), y: r1(b.y - 10), text: res.out === 'ric' ? 'RICOCHET' : 'NON-PENETRATION', c: '#9fd1ff', s: 14 });
-          if (res.out !== 'ric' || b.kind === 'mg') ev({ e: 'h', x: r1(b.x), y: r1(b.y), z: res.out === 'pen' ? (hit.face === 'rear' ? 2 : 0) : 1, vx: Math.round(b.vx), vy: Math.round(b.vy) });
+          // (m: an MG round, so clients skip the clank when it glances off)
+          if (res.out !== 'ric' || b.kind === 'mg') ev({ e: 'h', x: r1(b.x), y: r1(b.y), z: res.out === 'pen' ? (hit.face === 'rear' ? 2 : 0) : 1, vx: Math.round(b.vx), vy: Math.round(b.vy), m: b.kind === 'mg' ? 1 : undefined });
           if (res.out === 'ric') {
             // skip off the plate and keep going (slower, briefly)
             const c = Math.cos(e.hullA), sn = Math.sin(e.hullA);

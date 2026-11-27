@@ -1081,7 +1081,8 @@ function handleEvent(e) {
         soundAt('ricochet', e.x, e.y, 0.75);
         break;
       }
-      soundAt(e.z === 1 ? 'clank' : 'hit', e.x, e.y, 0.7);
+      // MG rounds glancing off armour: sparks only, no ricochet clank
+      if (!(e.z === 1 && e.m)) soundAt(e.z === 1 ? 'clank' : 'hit', e.x, e.y, 0.7);
       break;
     case 'x': {
       explosionFx(e.x, e.y, e.s);
@@ -3234,7 +3235,7 @@ const PART_SHORT = { tracks: 'TRACKS', engine: 'ENGINE', ammo: 'AMMO', fuel: 'FU
 const partsRack = (() => {
   const A = window.ZARMOR, el = document.createElement('div');
   el.className = 'parts';
-  el.innerHTML = (A ? A.COMPONENT_IDS : []).map(k =>
+  el.innerHTML = (A ? A.COMPONENT_IDS.filter(k => !A.COMPONENTS[k].disabled) : []).map(k =>
     `<div class="part" data-k="${k}" title="${A.COMPONENTS[k].name}"><svg viewBox="0 0 24 24" aria-hidden="true">${PART_ICON[k] || ''}</svg><span>${PART_SHORT[k] || k.toUpperCase()}</span></div>`).join('');
   ammoBar.insertBefore(el, ammoBar.firstChild);
   return el;
