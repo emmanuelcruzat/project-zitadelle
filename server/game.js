@@ -8,6 +8,22 @@ const {
   RANKS, rankForScore, ATTACKER, DEFENDER, CAP_R, CAP_POINTS, O_IDX, LINES, CAP_TIME, ROUND_END, BATTLE_TIME, CATS, RESERVES,
   RELOAD_MULT, DMG_MULT, TRAVERSE_MULT, CASEMATE_ARC,
 } = Z;
+// armour / penetration data lives in its own file, keyed by vehicle id
+const ARMOR = require('../shared/armor.js');
+// Armour model. A round that reaches a hull face either:
+//   ricochets   impact more than RICOCHET_DEG from the plate's normal (unless it overmatches) -> no damage,
+//               it skips off and keeps flying
+//   penetrates  penetration (±PEN_SPREAD) >= plate thickness / cos(impact angle)          -> full damage
+//   bounces     otherwise                                                                 -> NONPEN_DMG of its damage
+// Overmatch: a round more than OVERMATCH times the plate's thickness in calibre never ricochets.
+// Rockets (shaped charges) never ricochet.
+const RICOCHET_DEG = 70, OVERMATCH = 3, PEN_SPREAD = 0.1, NONPEN_DMG = 0;
+const MG_PEN = { mg34: 8, dt: 8, breda38: 8, m1919: 8, besa: 8, dshk: 20, m2hb: 20 };   // MG penetration in mm
+const MG_CAL = { dshk: 12.7, m2hb: 12.7 };                                               // MG calibre (default 7.9)
+{
+  const missing = CLASS_IDS.filter(id => CLASSES[id].enabled && !ARMOR.VEHICLES[id]);
+  if (missing.length) console.warn('armor.js has no entry for playable vehicles:', missing.join(', '));
+}
 
 const BOT_NAMES = {
   de: ['Lt. Brandt', 'Fw. Kraus', 'Uffz. Vogel', 'Hptm. Lange', 'Ogfr. Becker', 'Lt. Hartmann', 'Fw. Seidel',
@@ -156,6 +172,8 @@ function createGame(opts = {}) {
       const c = this.cls;
       const ratio = this.maxHp ? this.hp / this.maxHp : 1;
       this.r = 24 * c.size;
+      // the hull rectangle used for shell hits (the circle r is still used for movement and collisions)
+      this.hl = c.hull[0] * this.r / 2; this.hw = c.hull[1] * this.r / 2; this.rb = Math.hypot(this.hl, this.hw);
       this.maxHp = 100 * c.hp;
       if (this.hp !== undefined) this.hp = ratio * this.maxHp;
       this.regen = this.maxHp * 0.012;
@@ -180,13 +198,13 @@ function createGame(opts = {}) {
       this.score += n;
       if (this.client) pev(this, { e: 'aw', l: label, n });
     }
-    damage(amt, src, raw) {
+    damage(amt, src, raw, quiet) {
       if (!this.alive || phase !== 'play' || (this.invuln > 0 && !raw)) return;
       const dealt = Math.min(amt, this.hp);
       this.hp -= amt; this.lastHit = time;
       pev(this, { e: 'sh', a: r1(amt * 0.25) });
       // where it came from, for the player's damage-direction indicator (not for crashes into your own side)
-      if (this.client && src && src !== this && src.x !== undefined && src.team !== this.team)
+      if (!quiet && this.client && src && src !== this && src.x !== undefined && src.team !== this.team)
         pev(this, { e: 'dh', x: r1(src.x), y: r1(src.y), s: r2(clamp(amt / this.maxHp, 0, 1)) });
       // remember who did what to us, for damage and assist awards
       if (src && src.kind === 'tank' && src !== this && src.team !== this.team && dealt > 0) {
@@ -233,7 +251,7 @@ function createGame(opts = {}) {
         vx: Math.cos(fa) * spd + this.vx * 0.2, vy: Math.sin(fa) * spd + this.vy * 0.2,
         r: 3, dmg: this.bDmg * m.dmg, hp: 8 * m.pen,
         team: this.team, owner: this, life: 1.45 * m.range, kind: 'mg',
-        front: 0.4, splash: 0, accel: 0, maxSpd: 0, hits: [],
+        pen: MG_PEN[m.t] || 8, cal: MG_CAL[m.t] || 7.9, splash: 0, accel: 0, maxSpd: 0, hits: [],
       });
       this.invuln = 0;
       ev({ e: 'f', id: this.id, g: -1 - i, x: r1(mx), y: r1(my), a: r3(fa), k: KINDS.indexOf('mg'), b: 0, r: r1(r) });
@@ -252,7 +270,7 @@ function createGame(opts = {}) {
         vx: Math.cos(fa) * v0 + this.vx * 0.2, vy: Math.sin(fa) * v0 + this.vy * 0.2,
         r: Math.max(3, g.w * r * 0.5 * g.size), dmg: this.bDmg * g.dmg * DMG_MULT[g.kind], hp: this.bPen * g.pen,
         team: this.team, owner: this, life: 1.45 * g.range * (rocket ? 1.25 : 1), kind: g.kind,
-        front: clamp(0.59 + 0.12 * (g.pen - 1), 0.48, 0.95),
+        pen: (i === 0 && ARMOR.penOf(this.clsId)) || (g.kind === 'mg' ? 8 : 40), cal: g.mm || (g.kind === 'mg' ? 7.9 : 20),
         splash: g.splash * 40 * (r / 24), accel: rocket ? spd * 2.6 : 0, maxSpd: spd * 1.15, hits: [],
       });
       const imp = g.recoil * (g.kind === 'mg' ? 8 : 30) / this.cls.size;
@@ -607,7 +625,7 @@ function createGame(opts = {}) {
   function gridBuild() {
     for (let i = 0; i < grid.length; i++) grid[i].length = 0;
     const ins = e => {
-      const m = e.r + 16;
+      const m = (e.rb || e.r) + 16;
       const x0 = clamp(((e.x - m) / CELL) | 0, 0, GN - 1), x1 = clamp(((e.x + m) / CELL) | 0, 0, GN - 1);
       const y0 = clamp(((e.y - m) / CELL) | 0, 0, GN - 1), y1 = clamp(((e.y + m) / CELL) | 0, 0, GN - 1);
       for (let cy = y0; cy <= y1; cy++) for (let cx = x0; cx <= x1; cx++) grid[cy * GN + cx].push(e);
@@ -634,6 +652,7 @@ function createGame(opts = {}) {
       retreat: false, err: 0, errT: 0, skill: rand(0.35, 1),
       obj: -1, objT: 0, ox: 0, oy: 0, defender: Math.random() < 0.3,
       mgTgt: null, burst: 0, burstOn: false,
+      angleOff: (Math.random() < 0.5 ? 1 : -1) * rand(0.3, 0.55),   // how far off-square it angles its front
     };
   }
   // points a side has business at: ones it may take, and its own ones the enemy may take
@@ -725,6 +744,10 @@ function createGame(opts = {}) {
     const ai = t.ai, c = t.cls;
     t.input.mg = false; t.input.mgx = t.input.mgy = undefined;
     if (!c.mgs || phase !== 'play') return;
+    // they mostly leave the MGs alone: every few seconds there's only a small chance they'll use them for a while
+    ai.mgMoodT = (ai.mgMoodT || 0) - dt;
+    if (ai.mgMoodT <= 0) { ai.mgMoodT = rand(4, 8); ai.mgMood = Math.random() < 0.12; }
+    if (!ai.mgMood) return;
     ai.mgT = (ai.mgT || 0) - dt;
     if (ai.mgT <= 0) {
       ai.mgT = rand(0.2, 0.35);
@@ -768,6 +791,33 @@ function createGame(opts = {}) {
     return [mx, my];
   }
 
+  // ---- armour sense for bots (same data and rules as the hit code) ----
+  function faceArmour(e, face, cosInc) {
+    const arm = ARMOR.armorOf(e.clsId) || [50, 30, 20];
+    const thick = face === 'front' ? arm[0] : face === 'rear' ? arm[2] : arm[1];
+    const slope = face === 'front' ? ARMOR.slopeOf(e.clsId) * Math.PI / 180 : 0;
+    const ce = Math.max(0.02, cosInc * Math.cos(slope));
+    return { thick, eff: thick / ce, angle: Math.acos(ce) * 180 / Math.PI };
+  }
+  // The best place for t to put a round into e from where t stands: of the hull faces it can see (front,
+  // the side facing it, rear), the one where penetration / effective armour is highest. ratio >= 1: should
+  // penetrate; 0: would ricochet.
+  function weakSpot(t, e) {
+    const pen = ARMOR.penOf(t.clsId) || 40, cal = t.cls.guns[0].mm || 20, rocket = t.cls.guns[0].kind === 'rocket';
+    const c = Math.cos(e.hullA), s = Math.sin(e.hullA);
+    const lx = (t.x - e.x) * c + (t.y - e.y) * s, ly = -(t.x - e.x) * s + (t.y - e.y) * c;   // t in e's frame
+    const sd = ly >= 0 ? 1 : -1;
+    let best = null;
+    for (const [face, px, py, nx, ny] of [['front', e.hl * 0.8, 0, 1, 0], ['rear', -e.hl * 0.8, 0, -1, 0], ['side', -e.hl * 0.15, sd * e.hw * 0.8, 0, sd]]) {
+      const dx = lx - px, dy = ly - py, d = Math.hypot(dx, dy) || 1, cosInc = (dx * nx + dy * ny) / d;
+      if (cosInc <= 0.08) continue;                                  // turned away from us
+      const fa = faceArmour(e, face, cosInc);
+      const ric = !rocket && fa.angle > RICOCHET_DEG && cal <= OVERMATCH * fa.thick;
+      const ratio = ric ? 0 : pen / fa.eff;
+      if (!best || ratio > best.ratio) best = { face, ratio, x: e.x + px * c - py * s, y: e.y + px * s + py * c };
+    }
+    return best || { face: 'front', ratio: 0, x: e.x, y: e.y };
+  }
   function botThink(t, dt) {
     const ai = t.ai, c = t.cls;
     const sight = 900 * t.fov;
@@ -777,8 +827,10 @@ function createGame(opts = {}) {
       let best = null, bd = sight;
       for (const e of tanks) {
         if (!e.alive || e.team === t.team) continue;
-        // targets behind a house count as further away, so bots prefer ones they can actually hit
-        const d = Math.hypot(e.x - t.x, e.y - t.y) * (bldLine(t.x, t.y, e.x, e.y) ? 1.6 : 1);
+        // targets behind a house count as further away, so bots prefer ones they can actually hit,
+        // and so do ones whose armour they can't get through from here
+        const ws = weakSpot(t, e);
+        const d = Math.hypot(e.x - t.x, e.y - t.y) * (bldLine(t.x, t.y, e.x, e.y) ? 1.6 : 1) * (ws.ratio >= 1 ? 1 : ws.ratio >= 0.7 ? 1.6 : 2.6);
         if (d < bd) { bd = d; best = e; }
       }
       ai.tgt = best;
@@ -821,10 +873,12 @@ function createGame(opts = {}) {
       return Math.abs(angDiff(t.turA, a)) < (c.guns[0].kind === 'mg' ? 0.35 : 0.16);
     };
 
+    let holdFace = false, spot = null;
+    if (e) spot = weakSpot(t, e);
     if (ai.retreat) {
       const rx = rear.x - t.x, ry = rear.y - t.y, rd = Math.hypot(rx, ry) || 1;
       mx = rx / rd; my = ry / rd;
-      if (e) fire = aimAt(e.x, e.y, e.vx, e.vy) && Math.hypot(e.x - t.x, e.y - t.y) < sight * 0.8;
+      if (e) fire = aimAt(spot.x, spot.y, e.vx, e.vy) && Math.hypot(e.x - t.x, e.y - t.y) < sight * 0.8;
     } else {
       // drive to the objective; turrets keep shooting on the way
       const p = points[ai.obj];
@@ -841,11 +895,16 @@ function createGame(opts = {}) {
         // close to (or already holding) the objective: fight properly; otherwise keep pushing toward it
         if (onObj || d < desired || c.style === 'casemate') {
           const radial = d > desired + 80 ? 1 : d < desired - 120 ? -1 : 0;
-          if (onObj && radial > 0) { mx *= 0.3; my *= 0.3; }       // don't abandon the point to chase
+          if (c.style !== 'casemate' && spot.ratio < 0.9 && d < desired + 250) {
+            // can't get through anything it's showing us: work round to its side or rear
+            mx = -uy * ai.side + ux * radial * 0.5; my = ux * ai.side + uy * radial * 0.5;
+          } else if (onObj && radial > 0) { mx *= 0.3; my *= 0.3; }       // don't abandon the point to chase
           else if (c.style === 'casemate') { mx = ux * radial * 0.6; my = uy * radial * 0.6; }
           else { mx = mx * 0.3 + ux * radial; my = my * 0.3 + uy * radial; }
         }
-        fire = aimAt(e.x, e.y, e.vx, e.vy) && d < sight * 0.85;
+        // fighting without much driving to do: keep the (angled) front toward the enemy
+        holdFace = c.style !== 'casemate' && Math.hypot(mx, my) < 0.4 && d < sight * 0.85;
+        fire = aimAt(spot.x, spot.y, e.vx, e.vy) && d < sight * 0.85;
       } else if (ai.ob && !ai.ob.dead) {
         const o = ai.ob;
         fire = aimAt(o.x, o.y, o.vx, o.vy) && Math.hypot(o.x - t.x, o.y - t.y) < 480;
@@ -863,11 +922,17 @@ function createGame(opts = {}) {
       // casemates pivot the whole vehicle onto the target, then creep forward/back along it
       rot = clamp(angDiff(Math.atan2(ay - t.y, ax - t.x), t.hullA) * 3, -1, 1);
       th = clamp(mx * Math.cos(t.hullA) + my * Math.sin(t.hullA), -1, 1);
+    } else if (holdFace && e) {
+      // front toward the enemy, angled off-square so the plate is effectively thicker
+      rot = clamp(angDiff(Math.atan2(e.y - t.y, e.x - t.x) + ai.angleOff, t.hullA) * 3, -1, 1);
+      th = clamp((mx * Math.cos(t.hullA) + my * Math.sin(t.hullA)) * 0.6, -1, 1);
     } else if (ml > 0.1) {
       const mA = Math.atan2(my, mx);
       const wheel = c.steer === 'wheel';
-      // wheeled vehicles never back up to turn (their steering inverts); they keep rolling through the turn
-      const rev = !wheel && Math.abs(angDiff(mA, t.hullA)) > Math.PI * 0.62;
+      // wheeled vehicles never back up to turn (their steering inverts); they keep rolling through the turn.
+      // retreating from an enemy in front: reverse away, keeping the front armour toward it
+      const facingFoe = e && Math.abs(angDiff(Math.atan2(e.y - t.y, e.x - t.x), t.hullA)) < 1.2;
+      const rev = !wheel && (Math.abs(angDiff(mA, t.hullA)) > Math.PI * 0.62 || (ai.retreat && facingFoe && Math.abs(angDiff(mA, t.hullA)) > Math.PI * 0.4));
       const d = angDiff(rev ? mA + Math.PI : mA, t.hullA);
       rot = clamp(d * 3, -1, 1);
       const al = Math.max(0, Math.cos(d));
@@ -973,7 +1038,7 @@ function createGame(opts = {}) {
             o.cd = 1.5;
             const mx = o.x + Math.cos(o.gunA) * o.r * 1.15, my = o.y + Math.sin(o.gunA) * o.r * 1.15;
             bullets.push({ id: nextId++, x: mx, y: my, a: o.gunA, vx: Math.cos(o.gunA) * 480, vy: Math.sin(o.gunA) * 480,
-              r: 8, dmg: 24, hp: 30, team: 'x', owner: o, life: 1.6, kind: 'shell', front: 0.7, splash: 0, accel: 0, maxSpd: 0, hits: [] });
+              r: 8, dmg: 24, hp: 30, team: 'x', owner: o, life: 1.6, kind: 'shell', pen: 70, cal: 75, splash: 0, accel: 0, maxSpd: 0, hits: [] });
             ev({ e: 'bf', x: r1(mx), y: r1(my) });
           }
         } else o.gunA = angDiff(o.gunA + dt * 0.2, 0);
@@ -981,6 +1046,48 @@ function createGame(opts = {}) {
     }
   }
 
+  // Swept test of a round's path this tick against a tank's hull rectangle. Returns the entry point, the
+  // face it came through ('front' | 'rear' | 'side') and that face's outward normal in the hull's frame.
+  function hullHit(b, e) {
+    const c = Math.cos(e.hullA), s = Math.sin(e.hullA), pad = b.r * 0.6;
+    const toLocal = (x, y) => { const dx = x - e.x, dy = y - e.y; return [dx * c + dy * s, -dx * s + dy * c]; };
+    const [x0, y0] = toLocal(b.px === undefined ? b.x : b.px, b.py === undefined ? b.y : b.py), [x1, y1] = toLocal(b.x, b.y);
+    const hx = e.hl + pad, hy = e.hw + pad, dx = x1 - x0, dy = y1 - y0;
+    let tmin = -Infinity, tmax = Infinity, face = null, nx = 0, ny = 0;
+    for (const [p0, d, h, ax] of [[x0, dx, hx, 0], [y0, dy, hy, 1]]) {
+      if (Math.abs(d) < 1e-9) { if (p0 < -h || p0 > h) return null; continue; }
+      let t1 = (-h - p0) / d, t2 = (h - p0) / d, n = -1;          // t1: crosses the negative face
+      if (t1 > t2) { [t1, t2] = [t2, t1]; n = 1; }
+      if (t1 > tmin) { tmin = t1; face = ax; nx = ax === 0 ? n : 0; ny = ax === 1 ? n : 0; }
+      if (t2 < tmax) tmax = t2;
+    }
+    if (tmin > tmax || tmin > 1 || tmax < 0) return null;
+    if (tmin < 0) {      // already inside (point blank): take the face it's nearest to
+      const fx = Math.abs(x0) / hx, fy = Math.abs(y0) / hy;
+      if (fx >= fy) { face = 0; nx = Math.sign(x0) || 1; ny = 0; } else { face = 1; nx = 0; ny = Math.sign(y0) || 1; }
+      tmin = 0;
+    }
+    const ix = x0 + dx * tmin, iy = y0 + dy * tmin;
+    return {
+      x: e.x + ix * c - iy * s, y: e.y + ix * s + iy * c,
+      face: face === 0 ? (nx > 0 ? 'front' : 'rear') : 'side', nx, ny,
+    };
+  }
+  // What a round does to the face it hit: 'ric' (ricochet), 'pen' (penetrates) or 'bounce' (fails to).
+  function armourResult(b, e, hit) {
+    const arm = ARMOR.armorOf(e.clsId) || [50, 30, 20];
+    const thick = hit.face === 'front' ? arm[0] : hit.face === 'rear' ? arm[2] : arm[1];
+    const c = Math.cos(e.hullA), s = Math.sin(e.hullA);
+    const vlx = b.vx * c + b.vy * s, vly = -b.vx * s + b.vy * c, v = Math.hypot(vlx, vly) || 1;
+    const cosH = Math.abs(vlx * hit.nx + vly * hit.ny) / v;                         // angle across the hull
+    const slope = hit.face === 'front' ? ARMOR.slopeOf(e.clsId) * Math.PI / 180 : 0;  // plus the plate's tilt
+    const cosEff = Math.max(0.02, cosH * Math.cos(slope));
+    const angle = Math.acos(cosEff) * 180 / Math.PI;
+    const overmatch = (b.cal || 0) > OVERMATCH * thick;
+    if (b.kind !== 'rocket' && !overmatch && angle > RICOCHET_DEG) return { out: 'ric', angle, thick, eff: thick / cosEff };
+    const eff = thick / cosEff, roll = (b.pen || 0) * (1 + (Math.random() * 2 - 1) * PEN_SPREAD);
+    return { out: roll >= eff ? 'pen' : 'bounce', angle, thick, eff };
+  }
   function updateBullets(dt) {
     for (let i = bullets.length - 1; i >= 0; i--) {
       const b = bullets[i];
@@ -988,6 +1095,7 @@ function createGame(opts = {}) {
         const ns = Math.min(b.maxSpd, Math.hypot(b.vx, b.vy) + b.accel * dt);
         b.vx = Math.cos(b.a) * ns; b.vy = Math.sin(b.a) * ns;
       }
+      b.px = b.x; b.py = b.y;
       b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
       if (b.life <= 0 || b.x < -50 || b.y < -50 || b.x > WORLD + 50 || b.y > WORLD + 50) {
         if (b.splash) explode(b.x, b.y, b.splash, b.dmg * 0.6, b.team, b.owner);
@@ -1003,28 +1111,44 @@ function createGame(opts = {}) {
       let dead = false;
       for (const e of gridAt(b.x, b.y)) {
         if (b.hits.includes(e.id)) continue;
-        if (e.kind === 'tank') { if (!e.alive || e.team === b.team || e === b.owner) continue; }
-        else if (e.dead || b.team === 'x') continue;
+        if (e.kind === 'tank') {
+          if (!e.alive || e.team === b.team || e === b.owner) continue;
+          const hit = hullHit(b, e);
+          if (!hit) continue;
+          b.hits.push(e.id);
+          const res = armourResult(b, e, hit);
+          b.x = hit.x; b.y = hit.y;
+          if (res.out === 'pen') e.damage(b.dmg, b.owner);
+          else if (res.out === 'bounce' && NONPEN_DMG > 0 && b.kind !== 'mg') e.damage(b.dmg * NONPEN_DMG, b.owner, false, true);
+          // a shell bounced off a player's tank: a distinct clang for them, and a grey direction marker
+          if (res.out !== 'pen' && b.kind !== 'mg' && e.client && b.owner && b.owner.x !== undefined)
+            pev(e, { e: 'dh', x: r1(b.owner.x), y: r1(b.owner.y), s: 0.2, g: 1, r: res.out === 'ric' ? 1 : 0 });
+          // feedback: shooter and target see what happened (MG rounds only on a penetration of the rear)
+          const lbl = res.out === 'ric' ? ['RICOCHET', '#c8c8c8'] : res.out === 'bounce' ? ['NON-PENETRATION', '#c8c8c8']
+            : hit.face === 'rear' ? ['REAR HIT', '#ffb347'] : null;
+          if (lbl && b.kind !== 'mg' && b.owner && b.owner.client) pev(b.owner, { e: 't', x: r1(b.x), y: r1(b.y - 10), text: lbl[0], c: lbl[1], s: 14 });
+          if (res.out !== 'pen' && b.kind !== 'mg' && e.client) pev(e, { e: 't', x: r1(b.x), y: r1(b.y - 10), text: res.out === 'ric' ? 'RICOCHET' : 'NON-PENETRATION', c: '#9fd1ff', s: 14 });
+          if (res.out !== 'ric' || b.kind === 'mg') ev({ e: 'h', x: r1(b.x), y: r1(b.y), z: res.out === 'pen' ? (hit.face === 'rear' ? 2 : 0) : 1, vx: Math.round(b.vx), vy: Math.round(b.vy) });
+          if (res.out === 'ric') {
+            // skip off the plate and keep going (slower, briefly)
+            const c = Math.cos(e.hullA), sn = Math.sin(e.hullA);
+            const nx = hit.nx * c - hit.ny * sn, ny = hit.nx * sn + hit.ny * c, dot = b.vx * nx + b.vy * ny;
+            b.vx = (b.vx - 2 * dot * nx) * 0.6; b.vy = (b.vy - 2 * dot * ny) * 0.6;
+            b.a = Math.atan2(b.vy, b.vx); b.accel = 0;
+            b.x += nx * 2; b.y += ny * 2; b.life = Math.min(b.life, 0.35);
+            if (b.kind !== 'mg') ev({ e: 'h', x: r1(b.x), y: r1(b.y), z: 4, vx: Math.round(b.vx), vy: Math.round(b.vy) });
+            break;
+          }
+          if (b.splash) explode(b.x, b.y, b.splash, b.dmg * 0.6, b.team, b.owner);
+          dead = true;          // penetrated (stopped inside) or bounced off without skipping: round is spent
+          break;
+        }
+        if (e.dead || b.team === 'x') continue;
         const dx = e.x - b.x, dy = e.y - b.y, rr = e.r + b.r;
         if (dx * dx + dy * dy > rr * rr) continue;
         b.hits.push(e.id);
-        let zone = 0;
-        if (e.kind === 'tank') {
-          // armour facing: front deflects, rear is soft
-          const rel = Math.abs(angDiff(Math.atan2(b.y - e.y, b.x - e.x), e.hullA));
-          let mult = 1;
-          if (rel < Math.PI * 0.27) { mult = b.front; zone = mult < 0.7 ? 1 : 0; }
-          else if (rel > Math.PI * 0.73) { mult = 1.45; zone = 2; }
-          e.damage(b.dmg * mult, b.owner);
-          if (b.kind !== 'mg') {
-            if (b.owner && b.owner.client && Math.random() < 0.7) {
-              if (zone === 2) pev(b.owner, { e: 't', x: r1(b.x), y: r1(b.y - 10), text: 'REAR HIT', c: '#ffb347', s: 15 });
-              else if (zone === 1) pev(b.owner, { e: 't', x: r1(b.x), y: r1(b.y - 10), text: 'GLANCING', c: '#c8c8c8', s: 13 });
-            }
-            if (zone === 1 && e.client && Math.random() < 0.5) pev(e, { e: 't', x: r1(b.x), y: r1(b.y - 10), text: 'BOUNCED', c: '#9fd1ff', s: 14 });
-          }
-          b.hp -= e.resist;
-        } else {
+        const zone = 0;
+        {
           damageOb(e, b.dmg, b.owner);
           b.hp -= e.T.resist;
           if (e.T.mass < Infinity) { e.vx += b.vx * 0.05 / e.T.mass; e.vy += b.vy * 0.05 / e.T.mass; }

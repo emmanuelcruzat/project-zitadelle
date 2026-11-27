@@ -370,6 +370,18 @@ const Sound = (() => {
       nz(o, 'bandpass', 1900, 450, 0.15, 1.0, 0.001, 0.18, true);
       osc(o, 'sine', 220, 70, 0.15, 0.8, 0.002, 0.18);
     },
+    ricochet(o) {                                                              // glancing strike, then the round whines away
+      nz(o, 'highpass', 3800, 3800, 0, 0.55, 0.001, 0.025);
+      osc(o, 'sine', 1900, 1750, 0.2, 0.16, 0.001, 0.25);
+      osc(o, 'triangle', 3600, 650, 0.6, 0.22, 0.01, 0.65, 0.02);              // zing
+      osc(o, 'sine', 2900, 500, 0.7, 0.08, 0.02, 0.7, 0.03);
+    },
+    bounce(o, S, own, ric) {                                                   // shell off your own armour: a heavy bell-like clang
+      nz(o, 'lowpass', 5000, 900, 0.05, 1.3, 0.001, 0.07, true);
+      for (const [f, v, d] of [[190, 0.75, 0.9], [447, 0.4, 0.7], [863, 0.28, 0.55], [1390, 0.16, 0.4]]) osc(o, 'sine', f, f * 0.985, d, v, 0.002, d);
+      osc(o, 'sine', 95, 50, 0.2, 1.0, 0.003, 0.25);
+      if (ric) osc(o, 'triangle', 3400, 600, 0.6, 0.16, 0.02, 0.6, 0.05);   // and the round singing off
+    },
     clank(o) {                                                                 // ricochet: ringing plate + whine
       nz(o, 'highpass', 3500, 3500, 0, 0.5, 0.001, 0.03);
       for (const f of [1240, 2870, 4410]) osc(o, 'sine', f, f * 0.97, 0.4, 0.18, 0.001, 0.45);
@@ -382,7 +394,7 @@ const Sound = (() => {
       osc(o, 'sine', 300, 180, 0.08, 0.7, 0.002, 0.12, 0.11);
     },
   };
-  const COST = { cannon: 2, boom: 4, rocket: 1.5, mg: 0.6, hit: 0.6, clank: 0.6, reload: 0.5 };
+  const COST = { ricochet: 0.8, bounce: 1.5, cannon: 2, boom: 4, rocket: 1.5, mg: 0.6, hit: 0.6, clank: 0.6, reload: 0.5 };
 
   // vol: loudness at the source; dn: 0 (on top of you) .. 1 (edge of hearing)
   api.play = (kind, vol = 1, dn = 0, S = 1, own = false, x1) => {
@@ -439,7 +451,7 @@ const Sound = (() => {
   };
   return api;
 })();
-const HEAR = { cannon: 3800, boom: 3800, rocket: 3000, mg: 2000, hit: 1500, clank: 1500, reload: 400 };
+const HEAR = { ricochet: 2200, bounce: 400, cannon: 3800, boom: 3800, rocket: 3000, mg: 2000, hit: 1500, clank: 1500, reload: 400 };
 function soundAt(kind, x, y, vol = 1, S = 1, own = false, x1) {
   // small guns don't carry as far as big ones
   const reach = (HEAR[kind] || 1600) * (kind === 'cannon' ? clamp(S, 0.5, 1.4) : 1);
@@ -567,11 +579,12 @@ const DMG_DIR_LEN = 1.6;
 let dmgDirs = [];
 function addDamageDir(e) {
   const me = myTank(); if (!me) return;
+  if (e.g) Sound.play('bounce', 1, 0, 1, true, e.r);     // it bounced off you: right next to your ear
   const a = Math.atan2(e.y - me.y, e.x - me.x);
   // a hit from (nearly) the same direction refreshes that arc instead of stacking another
-  const same = dmgDirs.find(d => Math.abs(angDiff(Math.atan2(d.y - me.y, d.x - me.x), a)) < 0.35);
+  const same = dmgDirs.find(d => !!d.g === !!e.g && Math.abs(angDiff(Math.atan2(d.y - me.y, d.x - me.x), a)) < 0.35);
   if (same) { same.x = e.x; same.y = e.y; same.t = now; same.s = Math.min(1, same.s + e.s); return; }
-  dmgDirs.push({ x: e.x, y: e.y, t: now, s: e.s });
+  dmgDirs.push({ x: e.x, y: e.y, t: now, s: e.s, g: !!e.g });
   if (dmgDirs.length > 6) dmgDirs.shift();
 }
 function drawDamageDirs() {
@@ -586,14 +599,15 @@ function drawDamageDirs() {
     const alpha = clamp(1 - age / DMG_DIR_LEN, 0, 1) * (0.45 + 0.55 * Math.min(1, d.s * 4));
     const span = 0.32 + 0.18 * Math.min(1, d.s * 4);            // bigger hits draw a wider arc
     const pop = 1 + 0.08 * Math.max(0, 1 - age / 0.15);          // a quick swell when it lands
-    // soft outer glow, then the bright core
-    ctx.strokeStyle = `rgba(200,20,10,${0.35 * alpha})`; ctx.lineWidth = 22;
+    // soft outer glow, then the bright core (red: it hurt; grey: it bounced off)
+    const [glow, core, tip] = d.g ? ['150,150,150', '215,215,210', '225,225,220'] : ['200,20,10', '255,60,40', '255,80,60'];
+    ctx.strokeStyle = `rgba(${glow},${0.35 * alpha})`; ctx.lineWidth = 22;
     ctx.beginPath(); ctx.arc(cx0, cy0, R * pop, a - span, a + span); ctx.stroke();
-    ctx.strokeStyle = `rgba(255,60,40,${0.85 * alpha})`; ctx.lineWidth = 7;
+    ctx.strokeStyle = `rgba(${core},${0.85 * alpha})`; ctx.lineWidth = 7;
     ctx.beginPath(); ctx.arc(cx0, cy0, R * pop, a - span * 0.8, a + span * 0.8); ctx.stroke();
     // small chevron pointing outward at the source
     const tx = cx0 + Math.cos(a) * (R * pop + 16), ty = cy0 + Math.sin(a) * (R * pop + 16);
-    ctx.fillStyle = `rgba(255,80,60,${0.9 * alpha})`; ctx.beginPath();
+    ctx.fillStyle = `rgba(${tip},${0.9 * alpha})`; ctx.beginPath();
     ctx.moveTo(tx + Math.cos(a) * 9, ty + Math.sin(a) * 9);
     ctx.lineTo(tx + Math.cos(a + 2.4) * 8, ty + Math.sin(a + 2.4) * 8);
     ctx.lineTo(tx + Math.cos(a - 2.4) * 8, ty + Math.sin(a - 2.4) * 8);
@@ -980,6 +994,17 @@ function handleEvent(e) {
         break;
       }
       for (let k = 0; k < 3; k++) addP(e.x, e.y, -e.vx * rand(0.05, 0.2) + rand(-60, 60), -e.vy * rand(0.05, 0.2) + rand(-60, 60), rand(0.1, 0.25), 2.5, '#ffd27a', 'spark');
+      if (e.z === 4) {
+        const sp = Math.hypot(e.vx, e.vy) || 1, ux = e.vx / sp, uy = e.vy / sp;
+        for (let k = 0; k < 14; k++) {
+          const v = rand(120, 420), a = Math.atan2(uy, ux) + rand(-0.5, 0.5);
+          addP(e.x, e.y, Math.cos(a) * v, Math.sin(a) * v, rand(0.15, 0.4), rand(1.5, 3), pick(['#fff1b8', '#ffd27a', '#ffb347']), 'spark');
+        }
+        addP(e.x, e.y, ux * 40, uy * 40, 0.12, 14, '#fff6d8', 'flash');
+        addP(e.x, e.y, rand(-10, 10), rand(-10, 10), 0.5, 10, 'rgba(210,205,190,0.5)', 'smoke');
+        soundAt('ricochet', e.x, e.y, 0.75);
+        break;
+      }
       soundAt(e.z === 1 ? 'clank' : 'hit', e.x, e.y, 0.7);
       break;
     case 'x': {
