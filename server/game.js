@@ -161,8 +161,8 @@ function createGame(opts = {}) {
     gunReload(i) { const g = this.cls.guns[i]; return this.reloadT * g.reload * RELOAD_MULT[g.kind]; }
     initGuns() {
       this.cds = this.cls.guns.map(() => 0);
-      const load = ARMOR.ammoOf(this.clsId);
-      this.ammoAP = load.total - load.apcr; this.ammoAPCR = load.apcr;
+      // no ammo limits: AP is always available, APCR whenever the gun had it at all
+      this.ammoAP = Infinity; this.ammoAPCR = ARMOR.ammoOf(this.clsId).apcr > 0 ? Infinity : 0;
       if (this.ammoSel !== 'apcr' || !this.ammoAPCR) this.ammoSel = 'ap';
       this.ammoNext = this.ammoSel;
       this.ammo = this.cls.guns.map(g => g.clip);          // rounds left in the magazine (magazine guns)
@@ -1399,7 +1399,7 @@ function createGame(opts = {}) {
         rl: !t.alive ? 0 : t.cls.guns[0].clip ? (t.magLoad[0] ? r2(clamp(t.cds[0] / t.gunReload(0), 0, 1)) : 0) : r2(clamp(t.cds[0] / t.gunReload(0), 0, 1)),
         am: t.cls.guns[0].clip ? t.ammo[0] : undefined,
         // main gun ammo: AP left, APCR left, which is loaded (0 AP, 1 APCR)
-        ap: t.ammoAP, ar: t.ammoAPCR, as: t.ammoSel === 'apcr' ? 1 : 0, aq: t.ammoNext === 'apcr' ? 1 : 0,
+        ap: t.ammoAP > 0 ? 1 : 0, ar: t.ammoAPCR > 0 ? 1 : 0, as: t.ammoSel === 'apcr' ? 1 : 0, aq: t.ammoNext === 'apcr' ? 1 : 0,
         mb: t.cls.mgs ? t.mgBear.reduce((m, b, i) => m | (b ? 1 << i : 0), 0) : 0,
         // MG rounds left, and belt-change progress (1 = just started, 0 = ready)
         ma: t.cls.mgs ? t.mgAmmo : 0,

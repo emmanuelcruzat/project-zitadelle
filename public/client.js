@@ -3139,7 +3139,7 @@ function updateAmmoBar() {
   const A = window.ZARMOR;
   for (const [s, b] of Object.entries(ammoBtn)) {
     const n = s === 'ap' ? you.ap : you.ar, pen = A ? (s === 'ap' ? A.penOf(cls.id) : A.apcrPenOf(cls.id)) : null;
-    b.querySelector('.acount').textContent = n;
+    // (no count shown; an empty type just dims)
     b.querySelector('.apen').innerHTML = pen ? `${pen}<small>mm</small>` : '';
     const loaded = (s === 'apcr') === !!you.as, queued = (s === 'apcr') === !!you.aq && !loaded;
     b.classList.toggle('sel', loaded);
