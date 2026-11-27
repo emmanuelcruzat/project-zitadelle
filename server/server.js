@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { WebSocketServer, WebSocket } = require('ws');
 const { TICK_RATE, SNAP_RATE, CLASS_IDS } = require('../shared/shared.js');
+const { COMPONENT_IDS } = require('../shared/armor.js');
 const { createGame } = require('./game.js');
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -74,8 +75,9 @@ wss.on('connection', ws => {
   const client = { ws, msgs: 0 };
   clientOf.set(ws, client);
   game.addClient(client);
-  // roster: vehicles go over the wire by index, so the client checks it has the same list in the same order
-  ws.send(JSON.stringify({ t: 'welcome', dev: DEV, tickRate: TICK_RATE, snapRate: SNAP_RATE, roster: CLASS_IDS.join(',') }));
+  // roster: vehicles and components go over the wire by index, so the client checks it has the same lists in
+  // the same order (a page left open across an update would otherwise show the wrong vehicles or components)
+  ws.send(JSON.stringify({ t: 'welcome', dev: DEV, tickRate: TICK_RATE, snapRate: SNAP_RATE, roster: CLASS_IDS.join(',') + '|' + COMPONENT_IDS.join(',') }));
 
   ws.on('message', data => {
     if (++client.msgs > 120) return; // crude flood guard: max ~120 msgs per second

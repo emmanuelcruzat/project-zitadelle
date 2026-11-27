@@ -42,7 +42,9 @@ const validClass = (id, team) => (CLASSES[id] && CLASSES[id].faction === team &&
 // score awards
 // kill: Armor Destroyed; assist: Armor Destroyed Assist (dealt >= ASSIST_SHARE of the tank's health in the
 // last ASSIST_WINDOW s); damage: Armor Damaged, paid in DAMAGE_STEP chunks, worth this much per whole tank's health
-const SCORE = { assist: 50, damage: 60, capture: 150, neutral: 50, raid: 50, defend: 50 };
+const SCORE = { assist: 50, damage: 60, capture: 150, neutral: 50, raid: 50, defend: 50,
+  partHit: 10,                                                      // a hit that damages a component
+  partKill: { tracks: 40, engine: 50, ammo: 60, fuel: 40 } };       // destroying one
 // a kill is worth more the bigger the vehicle destroyed (by reserve category, see CATS)
 const KILL_SCORE = { lt: 70, mt: 100, ht: 150, td: 100, htd: 150 };
 const killScore = c => (CATS[c.cat] && KILL_SCORE[CATS[c.cat].key]) || 100;
@@ -154,6 +156,7 @@ function createGame(opts = {}) {
       this.input.fire = this.input.mg = false; this.input.th = this.input.rot = 0;
       this.initGuns();
       this.lastHit = -99; this.ai = null;
+      this.resetParts();
       this.dmgBy = new Map();   // enemy tank -> { amt: damage dealt this life, pend: not yet paid out, t: last hit }
     }
     // spawn code: >= 0 = inside that held capture point, -1-k = rear assembly area k, null = any live rear
@@ -170,7 +173,23 @@ function createGame(opts = {}) {
       this.vx = this.vy = 0; this.invuln = 3;
       this.hullA = Math.atan2(CENTER - this.y, CENTER - this.x); this.turA = this.hullA; this.gunRel = 0;
     }
-    gunReload(i) { const g = this.cls.guns[i]; return this.reloadT * g.reload * RELOAD_MULT[g.kind]; }
+    gunReload(i) {
+      const g = this.cls.guns[i];
+      return this.reloadT * g.reload * RELOAD_MULT[g.kind] * (this.parts && this.parts.ammo.down > 0 ? ARMOR.AMMO_RELOAD : 1);
+    }
+    // components (armor.js COMPONENTS): full health, all working
+    resetParts() {
+      this.parts = {};
+      for (const k of ARMOR.COMPONENT_IDS) { const max = this.maxHp * ARMOR.COMPONENTS[k].hp; this.parts[k] = { hp: max, max, down: 0, side: 1, fxT: 0 }; }
+    }
+    // what others see of its components: for a few seconds after one goes, 1 fuel tank burning (+4 on the
+    // right-hand side) and 2 ammo cooking off (+8 out of the right-hand side); 16 engine smoking, for as long
+    // as it's knocked out
+    partsFx() {
+      const p = this.parts;
+      return (p.fuel.fxT > 0 ? 1 | (p.fuel.side > 0 ? 4 : 0) : 0) | (p.ammo.fxT > 0 ? 2 | (p.ammo.side > 0 ? 8 : 0) : 0)
+        | (p.engine.down > 0 ? 16 : 0);
+    }
     initGuns() {
       this.cds = this.cls.guns.map(() => 0);
       // no ammo limits: AP is always available, APCR whenever the gun had it at all
@@ -319,17 +338,29 @@ function createGame(opts = {}) {
         pen: (i === 0 && (apcr ? ARMOR.apcrPenOf(this.clsId) : ARMOR.penOf(this.clsId))) || (g.kind === 'mg' ? 8 : 40), cal: g.mm || (g.kind === 'mg' ? 7.9 : 20),
         splash: g.splash * 40 * (r / 24), accel: rocket ? spd * 2.6 : 0, maxSpd: spd * 1.15, hits: [],
       });
-      const imp = g.recoil * (g.kind === 'mg' ? 8 : 30) / this.cls.size;
-      this.vx -= Math.cos(m.a) * imp; this.vy -= Math.sin(m.a) * imp;
       this.invuln = 0;
       // calibre class drives the sound/shake on clients: 0 light, 1 medium, 2 heavy
       const cal = g.w * g.size >= 0.38 || g.dmg >= 2.5 ? 2 : g.w * g.size > 0.27 || g.dmg >= 1.3 ? 1 : 0;
+      // du: how much ground dust the blast throws up round the vehicle (gun recoil x vehicle size; none for MGs)
       ev({ e: 'f', id: this.id, g: i, x: r1(m.x), y: r1(m.y), a: r3(fa), k: KINDS.indexOf(g.kind), b: cal, r: r1(r),
-        mm: g.mm || 0, v: r2(g.spd) });
+        mm: g.mm || 0, v: r2(g.spd), tx: r1(this.x), ty: r1(this.y), du: g.kind === 'mg' ? 0 : r2(g.recoil * this.cls.size) });
     }
     update(dt) {
       const inp = this.input, c = this.cls;
       if (this.invuln > 0) this.invuln -= dt;
+      // components: destroyed ones come back after their repair time (twice as fast at a friendly point);
+      // damaged ones heal gradually at the same rate as the hull (faster once out of contact)
+      const fast = atFriendlyRepair(this) ? 2 : 1, heal = 0.012 * dt * (time - this.lastHit > 9 ? 3.5 : 1);
+      for (const k of ARMOR.COMPONENT_IDS) {
+        const p = this.parts[k];
+        if (p.fxT > 0) p.fxT -= dt;
+        if (p.down <= 0 && p.hp < p.max) p.hp = Math.min(p.max, p.hp + p.max * heal);
+        if (p.down > 0 && (p.down -= dt * fast) <= 0) {
+          p.down = 0; p.hp = p.max;
+          pev(this, { e: 't', x: r1(this.x), y: r1(this.y - 30), text: `${ARMOR.COMPONENTS[k].name.toUpperCase()} REPAIRED`, c: '#9fe0a0', s: 14 });
+        }
+      }
+      const tracksDown = this.parts.tracks.down > 0, engineDown = this.parts.engine.down > 0;
 
       // Hull-relative controls: A/D steer the hull, W/S throttle along it. No sideways movement.
       const th = inp.th, rot = inp.rot;
@@ -341,7 +372,8 @@ function createGame(opts = {}) {
       if (c.steer === 'neutral') turn = 1;                           // tracks counter-rotate: full pivot
       else if (c.steer === 'clutch') turn = 0.4 + 0.6 * Math.min(1, Math.abs(sf) * 2.5); // swing on a braked track
       else turn = clamp(sf * 3, -1, 1);                              // wheels: no roll, no turn; reverse flips it
-      const dHull = rot * this.hullTurn * turn * dt;
+      // no tracks: the hull can't turn; a dead engine turns it slowly
+      const dHull = rot * this.hullTurn * turn * dt * (tracksDown ? 0 : engineDown ? ARMOR.ENGINE_TURN : 1);
       this.hullA += dHull;
       const turBefore = this.turA;
       if (c.style === 'casemate') {
@@ -377,6 +409,8 @@ function createGame(opts = {}) {
       let want = th * this.speed * (th < 0 ? 0.5 : 1);              // reverse gear is slow
       // a clutch-brake pivot drives one track while the other is locked, so the hull creeps forward
       if (c.steer === 'clutch' && rot && !th) want = this.speed * 0.12;
+      if (engineDown) want *= ARMOR.ENGINE_SPEED;
+      if (tracksDown) want = 0;                                        // immobilised
       const speeding = Math.abs(want) > Math.abs(fwd) && (fwd === 0 || Math.sign(want) === Math.sign(fwd));
       const rate = speeding ? this.accel : 1.8;                     // engines build up slowly, brakes bite harder
       const nf = fwd + (want - fwd) * (1 - Math.exp(-dt * rate));
@@ -540,8 +574,8 @@ function createGame(opts = {}) {
       for (const t of tanks) t.logiEnd = 0;
       for (const t of tanks) {
         t.score = t.kills = t.deaths = 0;
-        if (t.isBot) { if (t.alive) { t.placeAt(null); t.hp = t.maxHp; } else respawnBot(t); }
-        else if (t.alive) { t.placeAt(null); t.hp = t.maxHp; }
+        if (t.isBot) { if (t.alive) { t.placeAt(null); t.hp = t.maxHp; t.resetParts(); } else respawnBot(t); }
+        else if (t.alive) { t.placeAt(null); t.hp = t.maxHp; t.resetParts(); }
       }
       ev({ e: 'rn' });
     }
@@ -885,6 +919,17 @@ function createGame(opts = {}) {
     }
     return best || { face: 'front', ratio: 0, x: e.x, y: e.y };
   }
+  // A point on e's tracks for t to shoot at: on the side facing t, opposite t along the hull. Null when t is
+  // too far round to the front or rear (the shot would glance off the side or hit the end plate instead).
+  function trackSpot(t, e) {
+    const c = Math.cos(e.hullA), s = Math.sin(e.hullA);
+    const lx = (t.x - e.x) * c + (t.y - e.y) * s, ly = -(t.x - e.x) * s + (t.y - e.y) * c;   // t in e's frame
+    const sd = ly >= 0 ? 1 : -1, px = clamp(lx, -e.hl * 0.6, e.hl * 0.6), py = sd * e.hw * 0.85;
+    const dx = lx - px, dy = ly - py, d = Math.hypot(dx, dy) || 1;
+    if (Math.abs(dy) / d < 0.45) return null;
+    return { x: e.x + px * c - py * s, y: e.y + px * s + py * c };
+  }
+  const isHeavy = c => !!CATS[c.cat] && (CATS[c.cat].key === 'ht' || CATS[c.cat].key === 'htd');
   function botThink(t, dt) {
     const ai = t.ai, c = t.cls;
     const sight = 900 * t.fov;
@@ -897,7 +942,11 @@ function createGame(opts = {}) {
         // targets behind a house count as further away, so bots prefer ones they can actually hit,
         // and so do ones whose armour they can't get through from here; a scout's mark extends the reach
         const ws = weakSpot(t, e);
-        const d = Math.hypot(e.x - t.x, e.y - t.y) * (bldLine(t.x, t.y, e.x, e.y) ? 1.6 : 1) * (ws.ratio >= 1 ? 1 : ws.ratio >= 0.7 ? 1.6 : 2.6)
+        // (a heavy it can't penetrate is still worth engaging: it works round to the side for the tracks, then
+        // on toward the rear)
+        const tracksTarget = ws.ratio < 1 && isHeavy(e.cls);
+        const d = Math.hypot(e.x - t.x, e.y - t.y) * (bldLine(t.x, t.y, e.x, e.y) ? 1.6 : 1)
+          * (ws.ratio >= 1 ? 1 : tracksTarget ? 1.3 : ws.ratio >= 0.7 ? 1.6 : 2.6)
           / (isSpotted(t.team, e) ? SPOT_REACH : 1);
         if (d < bd) { bd = d; best = e; }
       }
@@ -965,6 +1014,12 @@ function createGame(opts = {}) {
         const s2 = weakSpot(t, e, ARMOR.apcrPenOf(t.clsId));
         if (s2.ratio >= 1) { spot = s2; t.ammoNext = 'apcr'; }
       }
+      // a heavy it can't get through anywhere: shoot its tracks (side hits break them even without
+      // penetrating) to pin it down, while still working round toward its side and rear (below)
+      if (spot.ratio < 1 && isHeavy(e.cls) && e.parts && !(e.parts.tracks.down > 0)) {
+        const tr = trackSpot(t, e);
+        if (tr) { spot = { face: 'tracks', ratio: spot.ratio, x: tr.x, y: tr.y }; t.ammoNext = 'ap'; }
+      }
     }
     if (ai.retreat) {
       const rx = rear.x - t.x, ry = rear.y - t.y, rd = Math.hypot(rx, ry) || 1;
@@ -983,10 +1038,12 @@ function createGame(opts = {}) {
       if (e) {
         const dx = e.x - t.x, dy = e.y - t.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
         const desired = botRange(c);
+        // a heavy it can't penetrate: commit to it and work round for the tracks and the rear
+        const hunt = c.style !== 'casemate' && spot.ratio < 1 && isHeavy(e.cls);
         // close to (or already holding) the objective: fight properly; otherwise keep pushing toward it
-        if (onObj || d < desired || c.style === 'casemate') {
+        if (onObj || d < desired || c.style === 'casemate' || hunt) {
           const radial = d > desired + 80 ? 1 : d < desired - 120 ? -1 : 0;
-          if (c.style !== 'casemate' && spot.ratio < 0.9 && d < desired + 250) {
+          if (c.style !== 'casemate' && spot.ratio < 0.9 && (d < desired + 250 || hunt)) {
             // can't get through anything it's showing us: work round to its side or rear
             mx = -uy * ai.side + ux * radial * 0.5; my = ux * ai.side + uy * radial * 0.5;
           } else if (onObj && radial > 0) { mx *= 0.3; my *= 0.3; }       // don't abandon the point to chase
@@ -1164,6 +1221,47 @@ function createGame(opts = {}) {
       face: face === 0 ? (nx > 0 ? 'front' : 'rear') : 'side', nx, ny,
     };
   }
+  // Components a shell or rocket reaches (MG fire never does). The tracks run outside the armour along both
+  // sides, so any side hit that doesn't ricochet damages them, penetrating or not. A penetration also damages
+  // what's behind that part of the hull: through the front, the ammo rack; through the rear, the engine
+  // (middle) or a fuel tank (corners); through the side, a fuel tank and the engine (rear third) or the ammo
+  // rack (middle).
+  function hitParts(e, b, hit, res) {
+    if (b.kind === 'mg' || res.out === 'ric' || !e.parts) return;
+    const c = Math.cos(e.hullA), s = Math.sin(e.hullA), dx = hit.x - e.x, dy = hit.y - e.y;
+    const u = (dx * c + dy * s) / e.hl, v = (-dx * s + dy * c) / e.hw;     // -1..1: rear..front, left..right
+    const parts = [];
+    if (hit.face === 'side') parts.push('tracks');
+    if (res.out === 'pen') {
+      if (hit.face === 'front') parts.push('ammo');
+      else if (hit.face === 'rear') parts.push(Math.abs(v) < 0.5 ? 'engine' : 'fuel');
+      else if (u < -0.35) parts.push('fuel', 'engine');     // the engine bay spans the back of the hull
+      else if (u < 0.35) parts.push('ammo');
+    }
+    for (const k of parts) partDamage(e, k, b.dmg, b.owner, hit, v);
+  }
+  function partDamage(e, k, amt, src, at, v) {
+    const p = e.parts[k];
+    if (p.down > 0 || !e.alive || phase !== 'play') return;              // already out of action
+    p.hp -= amt;
+    // "Engine Damaged +10", "Ammo Rack Destroyed +60" (enemy hits only)
+    const label = ARMOR.COMPONENTS[k].name.split(' ').map(w => w[0].toUpperCase() + w.slice(1)).join(' ');
+    const scorer = src && src.kind === 'tank' && src.team !== e.team ? src : null;
+    if (p.hp > 0) { if (scorer) scorer.award(label + ' Damaged', SCORE.partHit); return; }
+    if (scorer) scorer.award(label + ' Destroyed', SCORE.partKill[k] || 40);
+    p.hp = 0; p.down = ARMOR.COMPONENTS[k].repair; p.side = v >= 0 ? 1 : -1; p.fxT = ARMOR.COMPONENTS[k].fx || 0;
+    const name = ARMOR.COMPONENTS[k].name.toUpperCase() + ' DESTROYED';
+    if (src && src.client) pev(src, { e: 't', x: r1(at.x), y: r1(at.y - 24), text: name, c: '#ffb347', s: 15 });
+    if (e.client) pev(e, { e: 't', x: r1(e.x), y: r1(e.y - 30), text: name, c: '#ff6a4a', s: 16 });
+    // fuel tank / ammo rack: a one-off burst of extra damage (no damage over time)
+    const burst = ARMOR.COMPONENTS[k].burst || 0;
+    if (burst > 0) e.damage(e.maxHp * burst, src, false, true);
+  }
+  // inside a capture zone your side holds, or at one of your live rear areas
+  function atFriendlyRepair(t) {
+    return points.some(p => p.owner === t.team && inZone(t, p))
+      || rearsOf(t.team).some(k => Math.hypot(REARS[k].x - t.x, REARS[k].y - t.y) < 380);
+  }
   // What a round does to the face it hit: 'ric' (ricochet), 'pen' (penetrates) or 'bounce' (fails to).
   function armourResult(b, e, hit) {
     const arm = ARMOR.armorOf(e.clsId) || [50, 30, 20];
@@ -1209,6 +1307,7 @@ function createGame(opts = {}) {
           b.hits.push(e.id);
           const res = armourResult(b, e, hit);
           b.x = hit.x; b.y = hit.y;
+          hitParts(e, b, hit, res);
           if (res.out === 'pen') e.damage(b.dmg, b.owner);
           else if (res.out === 'bounce' && NONPEN_DMG > 0 && b.kind !== 'mg') e.damage(b.dmg * NONPEN_DMG, b.owner, false, true);
           // a shell bounced off a player's tank: a distinct clang for them, and a grey direction marker
@@ -1421,10 +1520,11 @@ function createGame(opts = {}) {
     for (const k of tanks) {
       if (!k.alive) continue;
       T.push([k.id, TEAM_IDS.indexOf(k.team), k.cls.idx, r1(k.x), r1(k.y), r3(k.hullA), r3(k.turA), r1(k.r),
-        r2(k.hp / k.maxHp), k.invuln > 0 ? 1 : 0, k.name, k.cls.mgs ? k.mgRel.map(r2) : 0, k.rank]);
+        r2(k.hp / k.maxHp), k.invuln > 0 ? 1 : 0, k.name, k.cls.mgs ? k.mgRel.map(r2) : 0, k.rank, k.partsFx()]);
     }
     const B = [];
-    for (const b of bullets) if (near(b.x, b.y)) B.push([b.id, r1(b.x), r1(b.y), r1(b.r), TEAM_IDS.indexOf(b.team), KINDS.indexOf(b.kind), r3(b.a)]);
+    // last field: 1 if this client fired it (so it can draw its own rounds differently)
+    for (const b of bullets) if (near(b.x, b.y)) B.push([b.id, r1(b.x), r1(b.y), r1(b.r), TEAM_IDS.indexOf(b.team), KINDS.indexOf(b.kind), r3(b.a), t && b.owner === t ? 1 : 0]);
     const O = [];
     for (const o of obstacles) if (!o.dead && near(o.x, o.y, o.r)) O.push([o.id, o.ti, r1(o.x), r1(o.y), r3(o.a), r2(o.hp / o.maxHp), r3(o.gunA), r2(o.grow)]);
     const E = [];
@@ -1448,7 +1548,8 @@ function createGame(opts = {}) {
     if (includeBoard) snap.lb = tanks.map(k => [k.id, TEAM_IDS.indexOf(k.team), k.name, k.score, k.kills, k.deaths, k.rank, k.alive ? 1 : 0,
       k.team === myTeam ? Math.round(logiLoad(k)) : -1]);
     if (t) {
-      snap.you = { id: t.id, alive: t.alive ? 1 : 0, score: t.score, rank: t.rank, deaths: t.deaths, c: t.cls.idx, kills: t.kills, fov: r3(t.fov), team: t.team,
+      // per component (armor.js COMPONENT_IDS order): pt seconds until repaired (0 = working), ph health 0..1
+      snap.you = { pt: ARMOR.COMPONENT_IDS.map(k => Math.ceil(t.parts[k].down)), ph: ARMOR.COMPONENT_IDS.map(k => r2(t.parts[k].hp / t.parts[k].max)), id: t.id, alive: t.alive ? 1 : 0, score: t.score, rank: t.rank, deaths: t.deaths, c: t.cls.idx, kills: t.kills, fov: r3(t.fov), team: t.team,
         // reload progress; a magazine gun only shows it while changing magazines (am = rounds left)
         rl: !t.alive ? 0 : t.cls.guns[0].clip ? (t.magLoad[0] ? r2(clamp(t.cds[0] / t.gunReload(0), 0, 1)) : 0) : r2(clamp(t.cds[0] / t.gunReload(0), 0, 1)),
         am: t.cls.guns[0].clip ? t.ammo[0] : undefined,

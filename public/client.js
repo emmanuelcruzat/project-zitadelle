@@ -537,7 +537,7 @@ function onMessage(m) {
     devMode = !!m.dev;
     // vehicles are sent by index: if the server is running an older vehicle list than this page,
     // every tank would be drawn as the wrong model. Refuse to play until they match.
-    if (m.roster && m.roster !== CLASS_IDS.join(',')) {
+    if (m.roster && m.roster !== CLASS_IDS.join(',') + '|' + (window.ZARMOR ? window.ZARMOR.COMPONENT_IDS.join(',') : '')) {
       rosterMismatch = true;
       setStatus('The server is running an older version of the game — restart the server, then reload this page.');
       if (state !== 'menu') backToMenu();
@@ -547,8 +547,8 @@ function onMessage(m) {
   if (m.t === 'pong') { ping = performance.now() - m.c; return; }
   if (m.t !== 's') return;
   const s = { tm: m.tm, T: new Map(), B: new Map(), O: new Map() };
-  for (const a of m.T) s.T.set(a[0], { id: a[0], team: TEAM_IDS[a[1]], cls: clsByIdx(a[2]), x: a[3], y: a[4], hullA: a[5], turA: a[6], r: a[7], hp: a[8], inv: a[9], name: a[10], mgRel: Array.isArray(a[11]) ? a[11] : undefined, rank: a[12] | 0 });
-  for (const a of m.B) s.B.set(a[0], { id: a[0], x: a[1], y: a[2], r: a[3], team: TEAM_IDS[a[4]], kind: KINDS[a[5]], a: a[6] });
+  for (const a of m.T) s.T.set(a[0], { id: a[0], team: TEAM_IDS[a[1]], cls: clsByIdx(a[2]), x: a[3], y: a[4], hullA: a[5], turA: a[6], r: a[7], hp: a[8], inv: a[9], name: a[10], mgRel: Array.isArray(a[11]) ? a[11] : undefined, rank: a[12] | 0, fx: a[13] | 0 });
+  for (const a of m.B) s.B.set(a[0], { id: a[0], x: a[1], y: a[2], r: a[3], team: TEAM_IDS[a[4]], kind: KINDS[a[5]], a: a[6], mine: a[7] === 1 });
   for (const a of m.O) s.O.set(a[0], { id: a[0], type: OB_TYPES[a[1]], x: a[2], y: a[3], a: a[4], hp: a[5], gunA: a[6], grow: a[7], r: OB[OB_TYPES[a[1]]].r });
   snaps.push(s);
   if (snaps.length > 60) snaps.shift();
@@ -593,6 +593,7 @@ setInterval(() => send({ t: 'ping', c: performance.now() }), 2000);
 // =====================================================================
 let now = 0;                 // local seconds (drives particles/animation)
 let vTanks = [], vBullets = [], vObs = [];
+const bOrigin = new Map();   // round id -> where it was first seen, so tracers only trail back that far
 const tstate = new Map();    // per-tank local animation state
 const ostate = new Map();    // per-obstacle hit flash
 const particles = [], texts = [], wrecks = [], feed = [];
@@ -920,7 +921,16 @@ function interpolate() {
   const f = s1.tm > s0.tm ? clamp((renderT - s0.tm) / (s1.tm - s0.tm), 0, 1) : 1;
   vTanks = []; vBullets = []; vObs = [];
   for (const [id, b] of s1.T) { const a = s0.T.get(id); vTanks.push(a ? lerpEnt(a, b, f, ['hullA', 'turA']) : b); }
-  for (const [id, b] of s1.B) { const a = s0.B.get(id); vBullets.push(a ? lerpEnt(a, b, f, []) : b); }
+  for (const [id, b] of s1.B) {
+    const a = s0.B.get(id), v = a ? lerpEnt(a, b, f, []) : b;
+    // where each round was first seen (just out of the muzzle): its tracer grows from there instead of
+    // reaching back through the turret
+    let o = bOrigin.get(id);
+    if (!o) { o = { x: v.x, y: v.y }; bOrigin.set(id, o); }
+    v.trav = Math.hypot(v.x - o.x, v.y - o.y);
+    vBullets.push(v);
+  }
+  if (bOrigin.size > 400) for (const id of bOrigin.keys()) if (!s1.B.has(id)) bOrigin.delete(id);
   for (const [id, b] of s1.O) { const a = s0.O.get(id); vObs.push(a ? lerpEnt(a, b, f, ['a', 'gunA']) : b); }
 
   while (eventQ.length && eventQ[0].tm <= renderT) handleEvent(eventQ.shift().e);
@@ -948,6 +958,35 @@ function updateLocal(dt) {
     t.st = st;
     if (t.hp < 0.35 && Math.random() < dt * 10)
       addP(t.x + rand(-6, 6), t.y + rand(-6, 6), rand(-10, 10), rand(-25, -5), rand(1, 2), t.r * 0.5, '#4a4641', 'smoke');
+    // destroyed components (just effects, no damage): a small fuel fire on that side's rear third, and
+    // rounds cooking off from the middle of the hull
+    if (t.fx && t.cls) {
+      const hl = t.cls.hull[0] * t.r / 2, hw = t.cls.hull[1] * t.r / 2, c = Math.cos(t.hullA), s = Math.sin(t.hullA);
+      const at = (lx, ly) => [t.x + lx * c - ly * s, t.y + lx * s + ly * c];
+      // engine knocked out: a steady plume of white smoke from the engine bay, until it's repaired
+      if (t.fx & 16 && Math.random() < dt * 9) {
+        const [ex, ey] = at(-hl * rand(0.45, 0.75), rand(-hw, hw) * 0.35);
+        addP(ex, ey, rand(-8, 8), rand(-30, -14), rand(1.4, 2.4), t.r * rand(0.35, 0.55), pick(['#eeece6', '#e2e0d9', '#f5f3ee']), 'smoke');
+      }
+      if (t.fx & 1) {
+        const [fx, fy] = at(-hl * 0.55, (t.fx & 4 ? 1 : -1) * hw * 0.8);
+        if (Math.random() < dt * 18) addP(fx + rand(-4, 4), fy + rand(-4, 4), rand(-6, 6), rand(-26, -10), rand(0.2, 0.45), t.r * rand(0.14, 0.26), pick(['#ffb347', '#ff7b2e', '#ffd56b']), 'fire');
+        if (Math.random() < dt * 5) addP(fx, fy, rand(-6, 6), rand(-22, -8), rand(0.9, 1.6), t.r * 0.3, '#3a3631', 'smoke');
+      }
+      // ammo cooking off: rapid bangs along the side that was hit, each spraying a fan of sparks out of it
+      if (t.fx & 2 && Math.random() < dt * 11) {
+        const sd = t.fx & 8 ? 1 : -1, [ax, ay] = at(rand(-0.35, 0.35) * hl, sd * hw);
+        const out = t.hullA + sd * Math.PI / 2, big = Math.random() < 0.3;
+        addP(ax, ay, 0, 0, big ? 0.12 : 0.08, t.r * (big ? rand(0.55, 0.8) : rand(0.3, 0.45)), '#fff1b8', 'flash');
+        if (big) addP(ax, ay, 0, 0, 0.3, t.r * 0.9, '#ffe3a0', 'ring');
+        for (let k = 0, n = big ? 16 : 9; k < n; k++) {
+          const sa = out + rand(-0.75, 0.75), sp = rand(180, big ? 460 : 340);
+          addP(ax, ay, Math.cos(sa) * sp, Math.sin(sa) * sp, rand(0.25, 0.55), t.r * rand(0.06, 0.12), pick(['#fffbe6', '#fff1b8', '#ffd56b', '#ffb347']), 'fire');
+        }
+        addP(ax, ay, Math.cos(out) * rand(15, 40), Math.sin(out) * rand(15, 40), rand(0.8, 1.4), t.r * 0.35, '#7d776c', 'smoke');
+        if (Math.random() < 0.5) soundAt('mg', ax, ay, big ? 0.55 : 0.35, big ? 0.7 : 1.3, false);
+      }
+    }
   }
   for (const [id, st] of tstate) if (now - st.seen > 5) tstate.delete(id);
 
@@ -991,6 +1030,15 @@ function handleEvent(e) {
       if (st && st.recoil[e.g] !== undefined) st.recoil[e.g] = 1;
       const mine = you && e.id === you.id;
       const kind = KINDS[e.k], r = e.r || 24, cal = e.b || 0;
+      // the blast stirs up a ring of ground dust round the vehicle: more and bigger for big guns on big hulls
+      if (e.du > 0 && e.tx !== undefined) {
+        const du = e.du, n = Math.round(4 + du * 7), sz = r * (0.35 + 0.18 * Math.sqrt(du));
+        for (let k = 0; k < n; k++) {
+          const da = rand(0, TAU), sp = rand(25, 70) * (0.7 + 0.3 * du), off = r * rand(0.5, 0.9);
+          addP(e.tx + Math.cos(da) * off, e.ty + Math.sin(da) * off, Math.cos(da) * sp, Math.sin(da) * sp,
+            rand(0.9, 1.7) * (0.8 + 0.2 * du), sz * rand(0.7, 1.2), pick(['#c9b98f', '#bfae84', '#d4c69e']), 'smoke');
+        }
+      }
       const near = clamp(1 - Math.hypot(e.x - cam.x, e.y - cam.y) / 1500, 0, 1);
       if (kind === 'mg') {
         addP(e.x, e.y, Math.cos(e.a) * 60, Math.sin(e.a) * 60, 0.06, r * 0.25, '#ffe9a8', 'flash');
@@ -1744,9 +1792,23 @@ function drawObstacle(o) {
   if (o.hp < 0.999) hpBar(o.x, o.y + o.r * s + 10, o.r * 1.6, o.hp, '#86c25a');
 }
 
+// your own shell or rocket: an extra cyan streak, longer than any side's tracer, so you can follow it
+// tracer length, never longer than the round has travelled (so it grows out of the muzzle)
+const trailLen = (b, len) => Math.min(len, b.trav === undefined ? len : b.trav);
+function drawOwnTracer(b, len, w) {
+  len = trailLen(b, len);
+  if (len < 1) return;
+  const ca = Math.cos(b.a), sa = Math.sin(b.a), tx = b.x - ca * len, ty = b.y - sa * len;
+  const g = ctx.createLinearGradient(tx, ty, b.x, b.y);
+  g.addColorStop(0, 'rgba(120,230,255,0)'); g.addColorStop(1, 'rgba(170,242,255,0.95)');
+  ctx.lineCap = 'round'; ctx.strokeStyle = g; ctx.lineWidth = w;
+  ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(b.x, b.y); ctx.stroke();
+  ctx.lineCap = 'butt';
+}
 function drawBullet(b) {
   const T = TEAMS[b.team] || TEAMS.x;
   if (b.kind === 'rocket') {
+    if (b.mine) drawOwnTracer(b, 160 + b.r * 18, Math.max(1.5, b.r * 0.6));
     ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.a);
     ctx.fillStyle = '#ffb347';
     ctx.beginPath(); ctx.ellipse(-b.r * 2.4, 0, b.r * 1.4 * rand(0.8, 1.2), b.r * 0.7, 0, 0, TAU); ctx.fill();
@@ -1757,7 +1819,8 @@ function drawBullet(b) {
   }
   if (b.kind === 'mg') {
     // tracer streak: glowing line trailing behind the round
-    const len = 26 + b.r * 4, ca = Math.cos(b.a), sa = Math.sin(b.a);
+    const len = trailLen(b, 26 + b.r * 4), ca = Math.cos(b.a), sa = Math.sin(b.a);
+    if (len < 1) return;
     ctx.lineCap = 'round';
     ctx.strokeStyle = b.team === 'su' ? 'rgba(255,90,60,0.35)' : 'rgba(255,200,90,0.35)'; ctx.lineWidth = b.r * 2.6;
     ctx.beginPath(); ctx.moveTo(b.x - ca * len, b.y - sa * len); ctx.lineTo(b.x, b.y); ctx.stroke();
@@ -1768,7 +1831,7 @@ function drawBullet(b) {
   }
   // tank shell: a long, fading tracer trail (red for Soviet rounds, white-yellow for German), a hot
   // glowing core and the projectile itself at the head
-  const ca = Math.cos(b.a), sa = Math.sin(b.a), len = 70 + b.r * 9, w = Math.max(2.2, b.r * 0.9);
+  const ca = Math.cos(b.a), sa = Math.sin(b.a), full = 70 + b.r * 9, len = Math.max(0.5, trailLen(b, full)), w = Math.max(2.2, b.r * 0.9);
   const su = b.team === 'su', tx = b.x - ca * len, ty = b.y - sa * len;
   const grad = ctx.createLinearGradient(tx, ty, b.x, b.y);
   grad.addColorStop(0, su ? 'rgba(240,50,25,0)' : 'rgba(255,160,40,0)');
@@ -1782,6 +1845,7 @@ function drawBullet(b) {
   ctx.strokeStyle = core; ctx.lineWidth = w;
   ctx.beginPath(); ctx.moveTo(b.x - ca * len * 0.55, b.y - sa * len * 0.55); ctx.lineTo(b.x, b.y); ctx.stroke();
   ctx.lineCap = 'butt';
+  if (b.mine) drawOwnTracer(b, full * 2.8, Math.max(1.5, w * 0.7));
   ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.a);
   ctx.fillStyle = '#3b3227';
   ctx.beginPath(); ctx.ellipse(0, 0, w * 1.6, w * 0.6, 0, 0, TAU); ctx.fill();
@@ -2314,21 +2378,30 @@ function drawHUD() {
       ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.beginPath(); ctx.arc(mx, my, 3.5, 0, TAU); ctx.fill();
       ctx.fillStyle = 'rgba(255,255,255,0.95)'; ctx.beginPath(); ctx.arc(mx, my, 2.25, 0, TAU); ctx.fill();
     }
-    // ---- reload bar, under the cursor ----
+    // ---- main gun state around the cursor: a reload ring (fills clockwise in amber while loading, a thin
+    // green ring when ready; magazine guns show one segment per round left), and the loaded ammo type below ----
     if (cls.guns[0].kind !== 'mg') {
-      const rl = you.rl || 0, bw = 40, bh = 5, rx = mx - bw / 2, ry = my + 10, clip = cls.guns[0].clip;
-      ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(rx - 1, ry - 1, bw + 2, bh + 2);
+      // the band sits right against the dot's dark outline (radius 3.5), with no gap
+      const rl = you.rl || 0, clip = cls.guns[0].clip, BW = 4, R = 3.5 + BW / 2, top = -Math.PI / 2;
+      ctx.save();
+      ctx.lineCap = 'butt'; ctx.lineWidth = BW;
+      ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+      ctx.beginPath(); ctx.arc(mx, my, R, 0, TAU); ctx.stroke();
       if (clip && rl === 0) {
-        // magazine gun: one pip per round left
-        const am = you.am == null ? clip : you.am, pw = bw / clip;
-        ctx.fillStyle = '#7fd46a';
-        for (let k = 0; k < am; k++) ctx.fillRect(rx + k * pw, ry, Math.max(1, pw - 1), bh);
+        const am = you.am == null ? clip : you.am, seg = TAU / clip, gap = Math.min(0.12, seg * 0.25);
+        ctx.strokeStyle = '#7fd46a';
+        for (let k = 0; k < am; k++) { ctx.beginPath(); ctx.arc(mx, my, R, top + k * seg + gap / 2, top + (k + 1) * seg - gap / 2); ctx.stroke(); }
       } else {
-        ctx.fillStyle = rl > 0 ? '#e6a03c' : '#7fd46a';
-        ctx.fillRect(rx, ry, bw * (1 - rl), bh);
+        ctx.strokeStyle = rl > 0 ? '#e6a03c' : '#7fd46a';
+        ctx.beginPath(); ctx.arc(mx, my, R, top, top + TAU * (rl > 0 ? 1 - rl : 1)); ctx.stroke();
       }
-      if (you.ap === 0 && you.ar === 0) hudText('OUT OF AMMO', mx, ry + bh + 11, 11, '#ff7a5c', 'center', 600);
-      else if (rl > 0) hudText(clip ? 'RELOADING' : 'LOADING', mx, ry + bh + 11, 11, '#e6a03c', 'center', 400);
+      ctx.restore();
+      const name = a => (a ? 'APCR' : 'AP');
+      if (you.ap === 0 && you.ar === 0) hudText('OUT OF AMMO', mx, my + R + 13, 11, '#ff7a5c', 'center', 600);
+      else if (you.ap !== undefined) {
+        const loaded = name(you.as), next = you.aq !== you.as ? ' \u203a ' + name(you.aq) : '';
+        hudText(loaded + next, mx, my + R + 13, 11, you.as ? '#9fd1ff' : '#e8e0c0', 'center', 600);
+      }
     }
     if (me) {
       // ---- aim line: from the main gun's muzzle to the cursor ----
@@ -2362,22 +2435,6 @@ function drawHUD() {
           ctx.moveTo(gx - 6, gy - 6); ctx.lineTo(gx + 6, gy + 6); ctx.moveTo(gx + 6, gy - 6); ctx.lineTo(gx - 6, gy + 6);
           ctx.stroke();
         }
-      }
-      if (c0.mgs) {
-        // one row per MG under the main-gun reload bar: name (bright when it can bear on the cursor, dim when
-        // it's out of its arc) and a belt bar (green = rounds left, orange = changing belts)
-        const y0 = my + ((you.rl || 0) > 0 ? 44 : 30), bw = 34, bh = 4;
-        c0.mgs.forEach((m, i) => {
-          const y = y0 + i * 15, on = (you.mb >> i) & 1;
-          const ammo = Array.isArray(you.ma) ? you.ma[i] : m.clip, rl = Array.isArray(you.mr) ? you.mr[i] : 0;
-          hudText(m.name, mx - 4, y, 11, rl > 0 ? '#e6a03c' : on ? (mouse.rdown ? '#ffe9a8' : '#e8e0c0') : 'rgba(170,165,150,0.5)', 'right', 400);
-          const bx = mx + 2, by = y - bh / 2;
-          ctx.globalAlpha = on || rl > 0 ? 1 : 0.5;
-          ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
-          ctx.fillStyle = rl > 0 ? '#e6a03c' : '#7fd46a';
-          ctx.fillRect(bx, by, bw * (rl > 0 ? 1 - rl : ammo / m.clip), bh);
-          ctx.globalAlpha = 1;
-        });
       }
     }
   }
@@ -3164,6 +3221,70 @@ addEventListener('keydown', e => {
 // ---- main gun ammo bar ----
 const ammoBar = document.getElementById('ammobar');
 const ammoBtn = { ap: ammoBar.querySelector('[data-a="ap"]'), apcr: ammoBar.querySelector('[data-a="apcr"]') };
+// ---- component rack, left of the ammo: each component's health as a fill rising from the bottom, green when
+// healthy through yellow to red; destroyed ones blink red with their repair countdown. Built from armor.js
+// COMPONENT_IDS. ----
+const PART_ICON = {
+  tracks: '<rect x="2" y="7" width="20" height="10" rx="5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="7" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="17" cy="12" r="1.8" fill="currentColor"/>',
+  engine: '<path d="M4 9h3V7h7v2h3l3 3v4h-3v2H7v-2H4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M1 11v4" stroke="currentColor" stroke-width="2"/>',
+  ammo: '<path d="M12 2c2.8 3 3.8 6 3.8 9.5V20H8.2v-8.5C8.2 8 9.2 5 12 2z" fill="currentColor"/><rect x="7.4" y="20.4" width="9.2" height="2" fill="currentColor"/>',
+  fuel: '<path d="M6 7l3-4h8l2 2v16H6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9.5 11l6 6M15.5 11l-6 6" stroke="currentColor" stroke-width="1.8"/>',
+};
+const PART_SHORT = { tracks: 'TRACKS', engine: 'ENGINE', ammo: 'AMMO', fuel: 'FUEL' };
+const partsRack = (() => {
+  const A = window.ZARMOR, el = document.createElement('div');
+  el.className = 'parts';
+  el.innerHTML = (A ? A.COMPONENT_IDS : []).map(k =>
+    `<div class="part" data-k="${k}" title="${A.COMPONENTS[k].name}"><svg viewBox="0 0 24 24" aria-hidden="true">${PART_ICON[k] || ''}</svg><span>${PART_SHORT[k] || k.toUpperCase()}</span></div>`).join('');
+  ammoBar.insertBefore(el, ammoBar.firstChild);
+  return el;
+})();
+// ---- machine guns, right of the ammo: one small dial per MG, its ring emptying counterclockwise as the belt
+// is used up, refilling (red) while the belt is changed; bright when it can bear on the cursor ----
+const mgRack = document.createElement('div');
+mgRack.className = 'mgrack';
+ammoBar.appendChild(mgRack);
+const MG_POS_SHORT = p => ({ bow: 'BOW', roof: 'ROOF', 'rear turret': 'REAR', 'left MG turret': 'L TUR', 'right MG turret': 'R TUR' }[p] || p.toUpperCase());
+let mgCls = null, mgSig = '';
+function updateMgRack(cls) {
+  if (cls.id !== mgCls) {
+    mgCls = cls.id; mgSig = '';
+    mgRack.innerHTML = (cls.mgs || []).map((m, i) =>
+      `<div class="mg" title="${escapeHtml(m.pos)} ${escapeHtml(m.name)}"><div class="mgdial"><i></i><b>${escapeHtml(m.name)}</b></div><span>${escapeHtml(MG_POS_SHORT(m.pos))}</span></div>`).join('');
+  }
+  if (!cls.mgs) return;
+  const sig = [you.ma, you.mr, you.mb].map(v => (Array.isArray(v) ? v.join(',') : v)).join('|');
+  if (sig === mgSig) return;
+  mgSig = sig;
+  cls.mgs.forEach((m, i) => {
+    const el = mgRack.children[i];
+    if (!el) return;
+    const n = Array.isArray(you.ma) ? you.ma[i] : m.clip, rl = Array.isArray(you.mr) ? you.mr[i] : 0;
+    const changing = rl > 0, f = changing ? 1 - rl : clamp(n / m.clip, 0, 1);
+    el.style.setProperty('--f', f);
+    el.classList.toggle('changing', changing);
+    el.classList.toggle('low', !changing && f < 0.25);
+    el.classList.toggle('on', !!((you.mb >> i) & 1));
+  });
+}
+let partsSig = '';
+function updatePartsRack() {
+  const A = window.ZARMOR;
+  if (!A || !you || !Array.isArray(you.pt)) return;
+  const ph = Array.isArray(you.ph) ? you.ph : you.pt.map(() => 1);
+  const sig = you.pt.join(',') + '|' + ph.join(',');
+  if (sig === partsSig) return;
+  partsSig = sig;
+  A.COMPONENT_IDS.forEach((k, i) => {
+    const el = partsRack.querySelector(`[data-k="${k}"]`), down = you.pt[i] > 0;
+    if (!el) return;
+    const f = down ? 0 : clamp(ph[i], 0, 1);
+    el.style.setProperty('--f', f);
+    el.style.setProperty('--c', logiColor(1 - f));
+    el.classList.toggle('down', down);
+    el.querySelector('span').textContent = down ? mmss(you.pt[i]) : (PART_SHORT[k] || k.toUpperCase());
+  });
+}
 let ammoSig = '';
 function setAmmo(s) {
   if (state !== 'play' || !you || !you.alive) return;
@@ -3175,7 +3296,9 @@ function updateAmmoBar() {
   const cls = you ? clsByIdx(you.c) : null;
   const show = state === 'play' && you && you.alive && cls && cls.guns[0].kind === 'shell' && you.ap !== undefined;
   ammoBar.classList.toggle('hidden', !show);
-  if (!show) { ammoSig = ''; return; }
+  if (!show) { ammoSig = ''; partsSig = ''; mgSig = ''; return; }
+  updatePartsRack();
+  updateMgRack(cls);
   // reload progress of the round going in (magazine guns: only while changing magazines)
   const prog = you.rl > 0 ? Math.round((1 - you.rl) * 50) / 50 : 0;
   const sig = [cls.id, you.ap, you.ar, you.as, you.aq, prog].join(',');

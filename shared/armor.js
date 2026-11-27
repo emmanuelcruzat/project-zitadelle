@@ -29,7 +29,8 @@
  *   dmg     damage multiplier          spd     shell velocity multiplier
  *   pen     shell toughness when shells collide (a multiplier, not mm: armour penetration is pen above)
  *   spread  inaccuracy, radians either side          range   shell travel multiplier
- *   recoil  shove on the firing vehicle              splash  blast radius multiplier (0 = none)
+ *   recoil  muzzle blast: how much ground dust a shot kicks up round the vehicle (x vehicle size; firing
+ *           doesn't move the vehicle)                splash  blast radius multiplier (0 = none)
  *
  * Values are approximate historical figures rounded for the game, not a reference.
  */
@@ -334,11 +335,26 @@ const apcrPenOf = id => (VEHICLES[id] && VEHICLES[id].pen ? VEHICLES[id].apcrPen
 // main gun load: { total, apcr } (AP = total - apcr)
 const ammoOf = id => (VEHICLES[id] ? { total: VEHICLES[id].ammo || 60, apcr: VEHICLES[id].apcr || 0 } : { total: 60, apcr: 0 });
 
+// ---- components: hidden health pools inside every vehicle ----
+// hp: share of the vehicle's max hp; repair: seconds until a destroyed one works again (twice as fast inside
+// a capture zone your side holds or at your rear area). Where they sit and what hits them is in game.js (hitParts).
+const COMPONENTS = {
+  tracks: { name: 'Tracks',     hp: 0.25, repair: 10 },   // destroyed: immobilised (the turret still works)
+  engine: { name: 'Engine',     hp: 0.25, repair: 20 },   // destroyed: ENGINE_SPEED top speed, ENGINE_TURN hull turning
+  ammo:   { name: 'Ammo rack',  hp: 0.25, repair: 20, burst: 0.15, fx: 4 },   // destroyed: guns reload AMMO_RELOAD times slower
+  fuel:   { name: 'Fuel tank',  hp: 0.20, repair: 15, burst: 0.12, fx: 4 },
+};
+const COMPONENT_IDS = Object.keys(COMPONENTS);
+const ENGINE_SPEED = 0.3, ENGINE_TURN = 0.5, AMMO_RELOAD = 2;
+// burst: share of the vehicle's max hp dealt once, on the hit that destroys the component (no damage over
+// time). fx: seconds of effect after it's destroyed: a fuel tank burns on the side that was hit, an ammo rack
+// cooks off, throwing sparks out of that side.
+
 // logistics: the most load a player can carry (seconds), and a vehicle's cost (0 if it has none)
 const LOGI_LIMIT = 600;
 const logiOf = id => (VEHICLES[id] ? VEHICLES[id].logi || 0 : 0);
 
-const ARMOR = { VEHICLES, MGS, VEHICLE_DEFAULTS, GUN_DEFAULTS, statsOf, armorOf, penOf, slopeOf, APCR_PEN, apcrPenOf, ammoOf, LOGI_LIMIT, logiOf };
+const ARMOR = { VEHICLES, MGS, COMPONENTS, COMPONENT_IDS, ENGINE_SPEED, ENGINE_TURN, AMMO_RELOAD, VEHICLE_DEFAULTS, GUN_DEFAULTS, statsOf, armorOf, penOf, slopeOf, APCR_PEN, apcrPenOf, ammoOf, LOGI_LIMIT, logiOf };
 if (typeof module !== 'undefined' && module.exports) module.exports = ARMOR;
 else root.ZARMOR = ARMOR;
 })(typeof self !== 'undefined' ? self : this);
