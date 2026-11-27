@@ -160,6 +160,17 @@ body.board-open #menu, body.board-open .deathcard, body.board-open .deploypanel,
 .infotabs button.sel.it { border-bottom-color: #d8c48a; color: #fff; }
 .infotabs button.sel.us { border-bottom-color: #a3b06e; color: #fff; }
 .infotabs button.sel.gb { border-bottom-color: #b8bc8e; color: #fff; }
+/* nation tabs: each name with its emblem, which pops in like the coalition shield (staggered), grows a little on
+   hover / when selected, and pops again when you switch to it */
+.nationtabs button { display: inline-flex; align-items: center; gap: 7px; }
+.nationtabs button canvas { width: 22px; height: 22px; transition: transform .3s; }
+.nationtabs button:hover canvas, .nationtabs button.sel canvas { transform: scale(1.18); }
+#infonation.enter .nationtabs button canvas { animation: heroBadge .5s cubic-bezier(.2,.8,.2,1) backwards; }
+#infonation.enter .nationtabs button:nth-child(1) canvas { animation-delay: .2s; }
+#infonation.enter .nationtabs button:nth-child(2) canvas { animation-delay: .3s; }
+#infonation.enter .nationtabs button:nth-child(3) canvas { animation-delay: .4s; }
+.nationtabs button canvas.pop { animation: heroBadge .45s cubic-bezier(.2,.8,.2,1); }
+@media (prefers-reduced-motion: reduce) { .nationtabs button canvas, .nationtabs button canvas.pop { animation: none !important; } }
 .inforole { color: #a99f78; font-size: 14px; margin-bottom: 4px; }
 .infosec { font-size: 12px; letter-spacing: 3px; text-transform: uppercase; color: #a99f78; border-bottom: 1px solid #3e3a28; margin: 14px 0 6px; padding-bottom: 3px; }
 .rscore.muted { color: #6f6a55; }

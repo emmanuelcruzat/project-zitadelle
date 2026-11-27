@@ -2969,8 +2969,30 @@ const VEHICLE_HISTORY = {
   m10: 'Tank destroyer on the Sherman chassis with a 3-inch gun in an open-topped turret, in service from 1942. It traded armour for speed and a powerful gun.',
   tetrarch: 'Light tank with a 2-pounder gun, later adapted to be carried into battle by glider. Tetrarchs landed with British airborne troops in Normandy in June 1944.',
   cromwell: 'Fast British cruiser tank with a 75mm gun, in service from 1944. Its Meteor engine, derived from the Spitfire\'s Merlin, made it one of the fastest tanks of the war.',
+  matilda2: "The 'Queen of the Desert': a slow infantry tank with up to 78mm of armour that almost no German or Italian anti-tank gun could stop in 1940-41, until the 88mm was turned on it. Its 2-pounder had no high-explosive shell. Over a thousand went to the Soviet Union under Lend-Lease.",
   churchill: 'Heavily armoured infantry tank built to climb rough ground and obstacles; the Mark VII had up to 152mm of frontal armour. Churchills sent to the Soviet Union fought at Kursk.',
   achilles: 'The British conversion of the American M10 with the 17-pounder, one of the few Allied guns that could defeat the Tiger and Panther from the front at range.',
+  nashorn: "The 'Rhinoceros': the long 88mm PaK 43 on a Panzer III/IV chassis with a thin, open-topped fighting compartment. First used in battle at Kursk, it could kill any Soviet tank from well beyond their reach, but had to stay out of return fire.",
+  m1139: "Italy's first medium tank, with its 37mm gun in the hull and only machine guns in the small turret. Outclassed in North Africa within months of its arrival in 1940; most were lost by early 1941.",
+  m1441: "The M13/40 with a more powerful diesel engine and desert air filters. Italy's most numerous tank, the backbone of its armoured divisions in North Africa through 1942.",
+  m1542: "A lengthened M14/41 with a petrol engine and the longer 47/40 gun. Built in 1943 just before the armistice; many were taken over by the Germans.",
+  sem4732: "The 47/32 anti-tank gun in an open box on the L6/40 light tank chassis. Used in North Africa and on the Eastern Front, including by Italian units on the Don in 1942.",
+  sem7534: "The Semovente 75/18 rearmed with the higher-velocity 75/34 gun, giving Italy a self-propelled gun that could fight Allied tanks rather than only support infantry.",
+  sem10525: "Nicknamed 'Bassotto' (dachshund) for its low, wide build. A powerful 105mm assault gun on the M43 chassis, mostly completed after the armistice and used by German units in Italy.",
+  sem9053: "The powerful 90/53 anti-aircraft gun mounted at the back of an M14/41 chassis, with almost no protection for the crew. Only 30 were built, and they fought in Sicily in 1943.",
+  m5stuart: "The M3 Stuart redesigned around two Cadillac car engines and an automatic gearbox, with a sloped front. Quick and dependable; by 1944 its 37mm gun was only good for scouting.",
+  m24: "The Stuart's replacement from late 1944: a lightweight 75mm gun, wide tracks and torsion-bar suspension. One of the best light tanks of the war, still in service decades later.",
+  m4a1_76: "The cast-hull Sherman with the T23 turret and the 76mm M1 gun, from 1944. Better against armour than the 75mm, though its HE shell was weaker.",
+  m4a3e8: "'Easy Eight': the late-war Sherman with horizontal volute spring suspension and wide tracks, a Ford V8 and the muzzle-braked 76mm gun. Arrived in Europe at the turn of 1945.",
+  m18: "A purpose-built tank destroyer that could top 80 km/h, trading armour for speed under the US 'seek, strike and destroy' doctrine. It had the highest kill ratio of any US armoured vehicle.",
+  m36: "The M10 hull with a new open-topped turret carrying the 90mm M3 gun. From late 1944 it was the only US vehicle that could reliably defeat a Panther from the front.",
+  m4a3e2: "An assault Sherman with extra armour welded on and a thick new turret, built in 1944 to lead breakthroughs. Only 254 were made, and they were prized by the crews who had them.",
+  t28gmc: "A 95-tonne casemate gun with 305mm of frontal armour and a 105mm gun, designed to crack the Siegfried Line. The two prototypes were finished after the war in Europe had ended.",
+  crusader3: "The Crusader cruiser tank rearmed with the 6-pounder in a cramped two-man turret. Fast on the desert and fought at El Alamein in 1942, but unreliable in service.",
+  firefly: "A British conversion that squeezed the 17-pounder into the Sherman's turret. Usually one per troop of four in Normandy, it was the one tank German crews tried to knock out first.",
+  comet: "Developed from the Cromwell, with a shortened 17-pounder (the 77mm HV) in a new turret. In service from early 1945 and one of the best British tanks of the war.",
+  archer: "The 17-pounder mounted facing backwards over the Valentine's engine deck, which kept the vehicle short and low. Crews fired from ambush, then simply drove off forwards.",
+  tortoise: "A 78-tonne assault gun with 228mm of armour and the 32-pounder, designed to break the Siegfried Line. Six were built after the war and only ever tested.",
 };
 function placeInfoTip(x, y) {
   const t = ui.infotip, w = t.offsetWidth, h = t.offsetHeight;
@@ -3035,12 +3057,19 @@ function showCoalition(coal) {
   drawCoalitionBadge(cv.getContext('2d'), coal, cv.width, cv.height);
   document.getElementById('coalname').textContent = coal;
   const tabs = document.getElementById('nationtabs'), list = COALITION_ORDER[coal];
-  tabs.innerHTML = list.map(t => `<button class="${t}" data-team="${t}">${escapeHtml(TEAMS[t].name)}</button>`).join('');
+  // each tab: the nation's emblem (popping in like the coalition shield) and its name
+  tabs.innerHTML = list.map(t => `<button class="${t}" data-team="${t}"><canvas width="48" height="48"></canvas><span>${escapeHtml(TEAMS[t].name)}</span></button>`).join('');
+  tabs.querySelectorAll('button').forEach(b => {
+    const cv = b.querySelector('canvas'), c = cv.getContext('2d');
+    c.clearRect(0, 0, cv.width, cv.height); c.save(); c.translate(cv.width / 2, cv.height / 2);
+    drawFactionMark(c, b.dataset.team, cv.width * 0.36); c.restore();
+  });
   tabs.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
     const to = b.dataset.team;
     if (to === infoTeam) return;
     const dir = Math.sign(list.indexOf(to) - list.indexOf(infoTeam)) || 1;
     tabs.querySelectorAll('button').forEach(x => x.classList.toggle('sel', x.dataset.team === to));   // tab lights at once
+    const mk = b.querySelector('canvas'); mk.classList.remove('pop'); void mk.offsetWidth; mk.classList.add('pop');   // its emblem pops
     swapContent(document.getElementById('infobody'), dir, () => showInfo(to));
   }));
   showInfo(list.includes(playerTeam) ? playerTeam : list[0]);
@@ -3457,7 +3486,7 @@ const TECH_TREE = {
   de: {
     lt: [['pz2c', 0], ['pz38t', 800], ['luchs', 1500]],
     mt: [['pz3', 0], ['pz4', 1500], ['panther', 4000]],
-    td: [['hetzer', 0], ['stug', 1500], ['jgpz4', 3000]],
+    td: [['hetzer', 0], ['stug', 1500], ['jgpz4', 3000], ['nashorn', 4500]],
     ht: [['tiger', 3500], ['tiger2', 8000]],
     htd: [['brummbaer', 3000], ['jagdpanther', 5000], ['ferdinand', 7000], ['jagdtiger', 10000]],
   },
