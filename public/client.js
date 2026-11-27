@@ -487,6 +487,21 @@ function poolArr(team, sp) {
   }
   return L && rsvLines[LINES.indexOf(L)] ? rsvLines[LINES.indexOf(L)] : total.map(() => 0);
 }
+// logistics load: the server's figure (seconds) and when it arrived; it drains in real time between snapshots
+let logi = 0, logiAt = 0;
+const logiLoad = () => Math.max(0, logi - (performance.now() / 1000 - logiAt));
+// costs and the limit live in armor.js (window.ZARMOR)
+const logiCost = id => (window.ZARMOR ? window.ZARMOR.logiOf(id) : 0);
+const logiLimit = () => (window.ZARMOR ? window.ZARMOR.LOGI_LIMIT : Infinity);
+const logiWait = id => Math.max(0, logiLoad() + logiCost(id) - logiLimit());   // seconds until id fits
+const mmss = s => { s = Math.ceil(s); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+// gauge colour for a fill fraction: green -> yellow -> red
+function logiColor(f) {
+  const stops = [[0, [127, 212, 106]], [0.5, [230, 200, 74]], [1, [224, 87, 63]]];
+  f = clamp(f, 0, 1);
+  const i = f <= 0.5 ? 1 : 2, [f0, c0] = stops[i - 1], [f1, c1] = stops[i], k = (f - f0) / (f1 - f0);
+  return `rgb(${c0.map((v, j) => Math.round(v + (c1[j] - v) * k)).join(',')})`;
+}
 const lineOf = i => CAP_POINTS[i].line;
 const isLineDead = L => !!lineDead[LINES.indexOf(L)];
 const OWNER = [null, 'de', 'su'];
@@ -561,6 +576,7 @@ function onMessage(m) {
   if (m.ph !== undefined) phase = m.ph;
   if (m.rl) rsvLines = m.rl;
   if (m.bt !== undefined) battleLeft = m.bt;
+  if (m.lg !== undefined) { logi = m.lg; logiAt = performance.now() / 1000; }
 }
 setInterval(() => send({ t: 'ping', c: performance.now() }), 2000);
 
@@ -651,27 +667,29 @@ function drawSpots() {
   for (const mk of spots) {
     const age = now - mk.t, a = clamp(age / 0.2, 0, 1) * clamp((SPOT_LEN - age) / 1.5, 0, 1);
     let sx = W / 2 + (mk.x - cam.x) * cam.scale, sy = H / 2 + (mk.y - cam.y) * cam.scale;
-    const off = sx < 30 || sx > W - 30 || sy < 30 || sy > H - 30;
-    sx = clamp(sx, 30, W - 30); sy = clamp(sy, 30, H - 30);     // off-screen: pinned to the edge
+    const s = 12, off = sx < 30 || sx > W - 30 || sy < 30 || sy > H - 30;
+    const ang = Math.atan2(mk.y - cam.y, mk.x - cam.x), ux = Math.cos(ang), uy = Math.sin(ang);
     ctx.save(); ctx.globalAlpha = a;
-    if (!off) {   // expanding ping rings on the spot
+    if (off) {
+      // off-screen: the arrow sits at the screen edge pointing at the enemy, and the symbol trails behind
+      // it, further into the screen
+      const tx = clamp(sx, 12, W - 12), ty = clamp(sy, 12, H - 12), AL = 12, AW = 8;
+      ctx.fillStyle = '#ff8a6a'; ctx.beginPath();
+      ctx.moveTo(tx, ty);
+      ctx.lineTo(tx - ux * AL - uy * AW, ty - uy * AL + ux * AW);
+      ctx.lineTo(tx - ux * AL + uy * AW, ty - uy * AL - ux * AW); ctx.closePath(); ctx.fill();
+      sx = tx - ux * (AL + 5 + s); sy = ty - uy * (AL + 5 + s);
+    } else {      // expanding ping rings on the spot
       const ring = (age * 1.2) % 1;
       ctx.strokeStyle = `rgba(235,60,45,${0.7 * (1 - ring)})`; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(sx, sy, 10 + ring * 40, 0, TAU); ctx.stroke();
     }
     // red disc with the vehicle class symbol
-    const s = 12;
     ctx.fillStyle = 'rgba(190,40,30,0.92)'; ctx.strokeStyle = '#ffd9cf'; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.arc(sx, sy, s, 0, TAU); ctx.fill(); ctx.stroke();
     drawCatIcon(ctx, mk.c, sx, sy + (mk.c >= 3 ? 0.5 : 0), 6.5, '#fff', null);
-    if (off) {    // arrow pointing toward it
-      const ang = Math.atan2(mk.y - cam.y, mk.x - cam.x);
-      ctx.fillStyle = '#ff8a6a'; ctx.beginPath();
-      ctx.moveTo(sx + Math.cos(ang) * (s + 9), sy + Math.sin(ang) * (s + 9));
-      ctx.lineTo(sx + Math.cos(ang + 2.6) * (s + 2), sy + Math.sin(ang + 2.6) * (s + 2));
-      ctx.lineTo(sx + Math.cos(ang - 2.6) * (s + 2), sy + Math.sin(ang - 2.6) * (s + 2)); ctx.closePath(); ctx.fill();
-    }
-    hudText(mk.by, sx, sy + s + 10, 10, '#ffd9cf', 'center', 400);
+    // who marked it: under the disc, or above it when the arrow points down (so it doesn't sit on the arrow)
+    hudText(mk.by, sx, off && uy > 0.5 ? sy - s - 9 : sy + s + 10, 10, '#ffd9cf', 'center', 400);
     ctx.restore();
   }
 }
@@ -2228,6 +2246,17 @@ function drawHUD() {
     const ox = 28 + ctx.measureText(`${online} online`).width + 10;
     hudText(`${pm} ms`, ox, 18, 12, pc, 'left', 400);
   }
+  // logistics load, top left under the connection line: a hollow ring filling clockwise from 12 o'clock
+  if (connected && state !== 'menu') {
+    const load = logiLoad(), f = clamp(load / logiLimit(), 0, 1), x = 30, y = 52, R = 14, col = logiColor(f);
+    ctx.save();
+    ctx.lineWidth = 5; ctx.lineCap = 'butt';
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)'; ctx.beginPath(); ctx.arc(x, y, R, 0, TAU); ctx.stroke();
+    if (f > 0) { ctx.strokeStyle = col; ctx.beginPath(); ctx.arc(x, y, R, -Math.PI / 2, -Math.PI / 2 + f * TAU); ctx.stroke(); }
+    ctx.restore();
+    hudText('LOGISTICS', x + R + 10, y - 7, 10, '#a99f78', 'left', 400);
+    hudText(mmss(load), x + R + 10, y + 7, 13, f > 0 ? col : '#e8e0c0', 'left', 600);
+  }
 
   if (you && state === 'play') {
     const cls = clsByIdx(you.c);
@@ -2248,7 +2277,7 @@ function drawHUD() {
         else if (!active || (!canMe && owner !== you.team)) {
           text = owner === you.team ? `${p.id} SECURE` : `${p.id} LOCKED — hold ${need} first`;
           col = '#b9b195';
-        } else if (contested) { text = `CONTESTED — ${p.id} · even numbers`; col = '#ff8a6a'; }
+        } else if (contested) { text = `CONTESTED — ${p.id} · even strength`; col = '#ff8a6a'; }
         else if (((you.team === 'de' ? cps[i][4] : cps[i][5]) || 0) < ((you.team === 'de' ? cps[i][5] : cps[i][4]) || 0)) {
           text = `OUTNUMBERED — ${p.id}`; col = '#ff8a6a';
         }
@@ -2566,6 +2595,9 @@ function updateDeployMap(dt) {
     if ((dmap.lookT -= dt) <= 0) { dmap.lookT = 0.5; send({ t: 'look', x: Math.round(dmap.selX), y: Math.round(dmap.selY) }); }
     const o = dmap.opts.find(q => q.code === dmap.sel);
     dmap.canDeploy = !!(o && o.ok); dmap.why = o ? o.why : 'unavailable';
+    // the point is fine but the chosen vehicle is still held back by your logistics load
+    dmap.logiWait = logiWait(selCls[playerTeam]);
+    dmap.go = dmap.canDeploy && !dmap.logiWait;
     // the point stopped being usable (lost, contested, enemies arrived): after a short grace period so a
     // passing flicker doesn't throw you out, pull back to the map and say why
     dmap.badT = dmap.canDeploy ? 0 : (dmap.badT || 0) + dt;
@@ -2577,8 +2609,8 @@ function updateDeployMap(dt) {
     }
     const wasOver = dmap.btnHover;
     dmap.btnHover = dmap.stage === 'pick' && overDeployButton(mouse.x, mouse.y);
-    if (dmap.btnHover && !wasOver && dmap.canDeploy) Sound.click([0], 3600, 0.12);
-    canvas.style.cursor = dmap.btnHover && dmap.canDeploy ? 'pointer' : '';
+    if (dmap.btnHover && !wasOver && dmap.go) Sound.click([0], 3600, 0.12);
+    canvas.style.cursor = dmap.btnHover && dmap.go ? 'pointer' : '';
   }
 }
 // width the vehicle panel takes on the right (matches .deploypanel in style.css)
@@ -2593,7 +2625,7 @@ function overDeployButton(mx, my) {
 }
 // round button on the chosen point with your side's emblem: click it to deploy
 function drawDeployButton() {
-  const { x, y } = deployButtonPos(), ok = dmap.canDeploy, hov = dmap.btnHover && ok;
+  const { x, y } = deployButtonPos(), ok = dmap.go, hov = dmap.btnHover && ok;
   const R = DEPLOY_BTN_R * (hov ? 1.08 : 1), pulse = 0.5 + 0.5 * Math.sin(now * 4);
   ctx.save();
   if (ok) {   // inviting ripple
@@ -2609,6 +2641,7 @@ function drawDeployButton() {
   ctx.globalAlpha = 1;
   const cls = CLASSES[selCls[playerTeam]];
   if (ok) hudText(`Deploy in ${cls ? cls.name : 'vehicle'}`, x, y + R + 18, 16, hov ? '#fff6c8' : '#f0e8c8');
+  else if (dmap.canDeploy) hudText(`${cls ? cls.name : 'Vehicle'} ready in ${mmss(dmap.logiWait)} — logistics load`, x, y + R + 18, 14, '#ffb86a', 'center', 400);
   else hudText(`Can't deploy — ${dmap.why}`, x, y + R + 18, 14, '#ff8a6a', 'center', 400);
   ctx.restore();
 }
@@ -3008,6 +3041,7 @@ function buildPicker(el, team) {
   armorTipHide();
   if (!CLASSES[selCls[team]] || CLASSES[selCls[team]].faction !== team || !CLASSES[selCls[team]].enabled) selCls[team] = START_CLASS[team];
   el.innerHTML = '<div class="vgroups"></div><div class="vdetail"></div>';
+  el.dataset.hover = '';
   const groups = el.querySelector('.vgroups'), grids = {};
   for (const id of sideClasses(team)) {
     const cat = CLASSES[id].cat;
@@ -3022,7 +3056,10 @@ function buildPicker(el, team) {
     const b = document.createElement('button');
     b.className = 'veh' + (id === selCls[team] ? ' sel' : '');
     b.dataset.id = id;
-    b.innerHTML = `<canvas width="160" height="120"></canvas><span>${escapeHtml(CLASSES[id].name)}</span><em class="vcat"></em>`;
+    // logistics cost: how much of the top-left ring this vehicle fills, and the time it adds
+    const lf = clamp(logiCost(id) / logiLimit(), 0, 1);
+    b.innerHTML = `<canvas width="160" height="120"></canvas><div class="vtext"><span>${escapeHtml(CLASSES[id].name)}</span>`
+      + `<em class="vlogi"><i class="lring" style="--f:${lf};--c:${logiColor(lf)}"></i>+${mmss(logiCost(id))}</em><em class="vcat"></em></div>`;
     b.title = CATS[CLASSES[id].cat].name;
     b.addEventListener('click', () => {
       if (b.classList.contains('empty')) return;
@@ -3030,8 +3067,8 @@ function buildPicker(el, team) {
       el.querySelectorAll('.veh').forEach(v => v.classList.toggle('sel', v.dataset.id === id));
       pickerDetail(el, id);
     });
-    b.addEventListener('mouseenter', () => { pickerDetail(el, id); armorTipSoon(b, id); });
-    b.addEventListener('mouseleave', () => { pickerDetail(el, selCls[team]); armorTipHide(); });
+    b.addEventListener('mouseenter', () => { el.dataset.hover = id; pickerDetail(el, id); armorTipSoon(b, id); });
+    b.addEventListener('mouseleave', () => { el.dataset.hover = ''; pickerDetail(el, selCls[team]); armorTipHide(); });
     grid.appendChild(b);
     drawPreview(b.querySelector('canvas'), id, team, 0);
   }
@@ -3039,17 +3076,19 @@ function buildPicker(el, team) {
   el.dataset.team = team; el.dataset.sig = '';
   refreshPicker(el);
 }
-// keep the reserve badges current; an empty category can't be picked
+// keep the reserve badges current; an empty category can't be picked. A vehicle held back by the
+// logistics load can still be selected (you deploy once its countdown runs out).
 function refreshPicker(el) {
   if (!el || !el.dataset.team) return;
   const team = el.dataset.team, r = poolArr(team, dmap.sel);
-  const sig = r.join(',');
+  const sig = r.join(',') + '|' + Math.ceil(logiLoad());
   if (sig === el.dataset.sig) return;
   el.dataset.sig = sig;
   el.querySelectorAll('.veh').forEach(b => {
-    const c = CLASSES[b.dataset.id], n = r[c.cat];
+    const c = CLASSES[b.dataset.id], n = r[c.cat], wait = n > 0 ? logiWait(c.id) : 0;
     b.querySelector('.vcat').textContent = n <= 0 ? 'none left' : '';
     b.classList.toggle('empty', n <= 0);
+    b.classList.toggle('wait', wait > 0);
   });
   el.querySelectorAll('.vgrouphead').forEach(h => { h.querySelector('span').textContent = `${r[+h.dataset.cat]} in reserve`; });
   const cur = CLASSES[selCls[team]];
@@ -3057,7 +3096,7 @@ function refreshPicker(el) {
     const alt = sideClasses(team).find(id => r[CLASSES[id].cat] > 0);
     if (alt) { selCls[team] = alt; el.querySelectorAll('.veh').forEach(v => v.classList.toggle('sel', v.dataset.id === alt)); }
   }
-  pickerDetail(el, selCls[team]);
+  pickerDetail(el, el.dataset.hover || selCls[team]);
 }
 function saveSel() {
   try { localStorage.setItem('zitadelle.cls', JSON.stringify(selCls)); } catch (e) { /* ignore */ }
@@ -3218,7 +3257,7 @@ document.getElementById('tomenu').addEventListener('click', () => {
 canvas.addEventListener('click', () => {
   if (state !== 'dead' || !dmap.open || showBoard || phase) return;
   if (dmap.stage === 'map') { if (dmap.hover && dmap.hover.ok) chooseSpawn(dmap.hover); }
-  else if (dmap.stage === 'pick' && overDeployButton(mouse.x, mouse.y)) { if (dmap.canDeploy) deploy(playerTeam); }
+  else if (dmap.stage === 'pick' && overDeployButton(mouse.x, mouse.y)) { if (dmap.go) deploy(playerTeam); }
   else backToMap();   // zoomed in on a point: clicking anywhere else off the vehicle panel pulls back out
 });
 addEventListener('keydown', e => {
@@ -3229,7 +3268,7 @@ addEventListener('keydown', e => {
   }
   if (showBoard) return;
   if (state !== 'dead' || !dmap.open || e.target.tagName === 'INPUT') return;
-  if (e.key === 'Enter' && dmap.stage === 'pick' && dmap.canDeploy) deploy(playerTeam);
+  if (e.key === 'Enter' && dmap.stage === 'pick' && dmap.go) deploy(playerTeam);
   if (e.key === 'Escape') { if (dmap.stage !== 'map') backToMap(); else if (!you) backToMenu(); }
   if (e.key.toLowerCase() === 't' && !e.repeat) switchSides();
 });

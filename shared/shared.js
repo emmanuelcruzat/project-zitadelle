@@ -108,11 +108,13 @@ function viewSize(fov, w, h) {
 }
 
 // ---------- vehicles ----------
-// clip: rounds per magazine (0 = single-loaded). For magazine guns, cycle is the time in seconds between
-// shots while the magazine lasts, and reload is the time to change magazines once it's empty.
+// Every gameplay number (speed, hp, traverse, view range, gun reload/damage/range..., calibre, armour,
+// logistics) lives in armor.js. What's defined here is what a vehicle is and how it's drawn: name, shape,
+// barrel geometry, weapon kind. def() merges the two.
+const ARMOR = typeof module !== 'undefined' && module.exports ? require('./armor.js') : root.ZARMOR;
+// barrel geometry and weapon kind; its stats are merged in from armor.js by def()
 function G(o) {
-  return Object.assign({ off: 0, ang: 0, len: 1.5, w: 0.28, reload: 1, dmg: 1, spd: 1, pen: 1, size: 1,
-    spread: 0.03, delay: 0, recoil: 1, range: 1, kind: 'shell', brake: false, splash: 0, clip: 0, cycle: 0 }, o);
+  return Object.assign({ off: 0, ang: 0, len: 1.5, w: 0.28, size: 1, delay: 0, kind: 'shell', brake: false }, o);
 }
 function rack(n, width, ripple, o) {
   const out = [];
@@ -143,239 +145,185 @@ const FACTIONS = {
 const CLASSES = {};
 let FACTION = 'de';
 function def(id, o) {
-  CLASSES[id] = Object.assign({
+  const s = ARMOR.statsOf(id);
+  const c = CLASSES[id] = Object.assign({
     id, faction: FACTION, style: 'tank', hull: [2.0, 1.55], turret: 0.6, turretShape: 'round', turretX: 0,
-    caseX: 0, caseW: 1.2, traverse: 3, speed: 1, hp: 1, fov: 1, ram: 1, size: 1,
+    caseX: 0, caseW: 1.2, size: 1,
     guns: [G({})], tier: 0, desc: '',
-  }, o);
+  }, o, s.vehicle);
+  // every barrel of a vehicle shares its gun stats; shell guns also get their calibre (sound, overmatch)
+  for (const g of c.guns) {
+    Object.assign(g, s.gun);
+    if (g.kind === 'shell' && s.cal) g.mm = s.cal;
+  }
 }
 
 // ---- Germany ----
 FACTION = 'de';
 def('pz2c', { name: 'Panzer II C', tier: 0, hull: [1.75, 1.35], size: 0.85, turretShape: 'box', turret: 0.46, turretX: 0.05,
-  traverse: 4.5, speed: 1.22, hp: 0.7,
-  guns: [G({ len: 1.15, w: 0.15, clip: 10, cycle: 0.22, reload: 2.3, dmg: 0.38, spd: 1.1, pen: 0.6, spread: 0.06, recoil: 0.3 })],
+  guns: [G({ len: 1.15, w: 0.15 })],
   desc: 'Early light tank. 20mm autocannon, 10-round magazines.' });
 def('pz38t', { name: 'Panzer 38(t)', tier: 1, hull: [1.85, 1.4], size: 0.9, turretShape: 'box', turret: 0.5, turretX: 0.08,
-  traverse: 4.0, speed: 1.18, hp: 0.8,
-  guns: [G({ len: 1.3, w: 0.18, reload: 0.5, dmg: 0.6, spd: 1.15, pen: 0.8, spread: 0.05, recoil: 0.5 })],
+  guns: [G({ len: 1.3, w: 0.18 })],
   desc: 'Czech-built light tank with a 37mm gun.' });
 def('luchs', { name: 'Panzer II L', tier: 1, hull: [1.9, 1.4], size: 0.9, turretShape: 'box', turret: 0.5, turretX: 0.02,
-  traverse: 4.6, speed: 1.35, hp: 0.75, fov: 1.15,
-  guns: [G({ len: 1.2, w: 0.15, clip: 10, cycle: 0.13, reload: 2.3, dmg: 0.4, spd: 1.15, pen: 0.62, spread: 0.06, recoil: 0.3 })],
+  guns: [G({ len: 1.2, w: 0.15 })],
   desc: 'Fast reconnaissance tank. Faster-firing 20mm, 10-round magazines.' });
-def('pz3', { name: 'Panzer III', tier: 0, turretShape: 'box', turret: 0.58, turretX: 0.02, traverse: 3.2,
+def('pz3', { name: 'Panzer III', tier: 0, turretShape: 'box', turret: 0.58, turretX: 0.02,
   guns: [G({ len: 1.45, w: 0.27 })],
   desc: 'Dependable medium tank with a 50mm gun.' });
-def('pz4', { name: 'Panzer IV', tier: 1, hull: [2.15, 1.6], turretShape: 'box', turret: 0.62, traverse: 2.8, fov: 1.1,
-  guns: [G({ len: 1.9, w: 0.26, dmg: 1.3, spd: 1.2, pen: 1.2, brake: true, range: 1.15 })],
+def('pz4', { name: 'Panzer IV', tier: 1, hull: [2.15, 1.6], turretShape: 'box', turret: 0.62,
+  guns: [G({ len: 1.9, w: 0.26, brake: true })],
   desc: 'Long 75mm. The workhorse.' });
 def('hetzer', { name: 'Hetzer', tier: 1, style: 'casemate', hull: [1.95, 1.45], size: 0.92, caseX: -0.05, caseW: 1.15,
-  traverse: 1.9, hp: 1.0, speed: 1.0, fov: 1.15,
-  guns: [G({ len: 1.75, w: 0.24, dmg: 1.4, spd: 1.25, pen: 1.3, reload: 1.15, range: 1.2, recoil: 1.5 })],
+  guns: [G({ len: 1.75, w: 0.24 })],
   desc: 'Small, low tank destroyer. Hard to spot, hard to hit.' });
-def('stug', { name: 'StuG III', tier: 1, style: 'casemate', hull: [2.1, 1.6], caseX: 0.05, caseW: 1.2, traverse: 2.0, hp: 1.15,
-  guns: [G({ len: 1.55, w: 0.3, dmg: 1.7, pen: 1.3, reload: 1.25, recoil: 1.6, brake: true })],
+def('stug', { name: 'StuG III', tier: 1, style: 'casemate', hull: [2.1, 1.6], caseX: 0.05, caseW: 1.2,
+  guns: [G({ len: 1.55, w: 0.3, brake: true })],
   desc: 'Casemate assault gun. The whole hull aims.' });
 def('jgpz4', { name: 'Jagdpanzer IV', tier: 2, style: 'casemate', hull: [2.15, 1.6], caseX: 0, caseW: 1.4,
-  traverse: 1.9, fov: 1.32, hp: 1.2, speed: 0.95,
-  guns: [G({ len: 2.3, w: 0.24, dmg: 1.6, spd: 1.55, pen: 1.5, reload: 1.2, range: 1.45, recoil: 1.8 })],
+  guns: [G({ len: 2.3, w: 0.24 })],
   desc: 'Low-slung tank destroyer with the long 75mm.' });
 def('sdkfz', { name: 'Sd.Kfz. 251', tier: 1, style: 'halftrack', hull: [2.2, 1.3], turret: 0.3, turretShape: 'pintle',
-  turretX: 0.15, traverse: 6, speed: 1.2, hp: 0.85,
-  guns: twin(0.1, { len: 1.25, w: 0.13, reload: 0.3, dmg: 0.36, pen: 0.6, spread: 0.12, kind: 'mg', recoil: 0.2 }), desc: 'Fast halftrack with twin MG 42s.' });
-def('tiger', { name: 'Tiger I', tier: 2, hull: [2.3, 1.8], size: 1.1, turretShape: 'box', turret: 0.72, traverse: 1.6,
-  hp: 1.6, speed: 0.82, ram: 1.4,
-  guns: [G({ len: 1.95, w: 0.33, dmg: 2.1, spd: 1.15, pen: 1.6, reload: 1.45, brake: true, recoil: 2, size: 1.05 })], desc: '88mm heavy. Slow turret, brutal punch.' });
-def('panther', { name: 'Panther', tier: 2, hull: [2.3, 1.65], turretShape: 'box', turret: 0.6, traverse: 2.4, fov: 1.28, speed: 1.05,
-  guns: [G({ len: 2.3, w: 0.24, dmg: 1.4, spd: 1.55, pen: 1.45, reload: 1.05, brake: true, range: 1.4 })], desc: 'High-velocity 75mm. Long reach.' });
+  turretX: 0.15,
+  guns: twin(0.1, { len: 1.25, w: 0.13, kind: 'mg' }), desc: 'Fast halftrack with twin MG 42s.' });
+def('tiger', { name: 'Tiger I', tier: 2, hull: [2.3, 1.8], size: 1.1, turretShape: 'box', turret: 0.72,
+  guns: [G({ len: 1.95, w: 0.33, brake: true, size: 1.05 })], desc: '88mm heavy. Slow turret, brutal punch.' });
+def('panther', { name: 'Panther', tier: 2, hull: [2.3, 1.65], turretShape: 'box', turret: 0.6,
+  guns: [G({ len: 2.3, w: 0.24, brake: true })], desc: 'High-velocity 75mm. Long reach.' });
 def('jagdpanther', { name: 'Jagdpanther', tier: 3, style: 'casemate', hull: [2.35, 1.7], caseX: -0.05, caseW: 1.5,
-  traverse: 1.8, fov: 1.38, speed: 1.0, hp: 1.3,
-  guns: [G({ len: 2.35, w: 0.27, dmg: 2.3, spd: 1.7, pen: 1.8, reload: 1.3, brake: true, range: 1.5, recoil: 2 })],
+  guns: [G({ len: 2.35, w: 0.27, brake: true })],
   desc: 'Fast tank destroyer with a long 88.' });
 def('ferdinand', { name: 'Ferdinand', tier: 2, style: 'casemate', hull: [2.6, 1.75], size: 1.12, caseX: -0.35, caseW: 1.2,
-  traverse: 1.1, fov: 1.42, hp: 1.45, speed: 0.76,
-  guns: [G({ len: 2.55, w: 0.26, dmg: 2.7, spd: 1.75, pen: 2.0, reload: 1.8, range: 1.6, recoil: 2.4, brake: true })], desc: 'Heavy tank destroyer. Sniper at extreme range.' });
-def('brummbaer', { name: 'Brummbär', tier: 2, style: 'casemate', hull: [2.15, 1.7], caseX: 0.1, caseW: 1.3, traverse: 1.6,
-  hp: 1.55, speed: 0.85,
-  guns: [G({ len: 1.15, w: 0.5, dmg: 2.6, spd: 0.62, pen: 2.2, reload: 2.0, size: 1.15, recoil: 3, range: 0.95, splash: 1.6 })], desc: '150mm assault howitzer. Shells burst on impact.' });
-def('wirbelwind', { name: 'Wirbelwind', tier: 2, hull: [2.15, 1.6], turretShape: 'open', turret: 0.62, traverse: 4.5, speed: 1.05,
-  guns: quad({ len: 1.5, w: 0.1, reload: 0.28, dmg: 0.42, pen: 0.7, spread: 0.1, kind: 'mg', recoil: 0.15 }), desc: 'Quad 20mm flak. A wall of lead.' });
+  guns: [G({ len: 2.55, w: 0.26, brake: true })], desc: 'Heavy tank destroyer. Sniper at extreme range.' });
+def('brummbaer', { name: 'Brummbär', tier: 2, style: 'casemate', hull: [2.15, 1.7], caseX: 0.1, caseW: 1.3,
+  guns: [G({ len: 1.15, w: 0.5, size: 1.15 })], desc: '150mm assault howitzer. Shells burst on impact.' });
+def('wirbelwind', { name: 'Wirbelwind', tier: 2, hull: [2.15, 1.6], turretShape: 'open', turret: 0.62,
+  guns: quad({ len: 1.5, w: 0.1, kind: 'mg' }), desc: 'Quad 20mm flak. A wall of lead.' });
 def('stukafuss', { name: 'Stuka zu Fuß', tier: 2, style: 'halftrack', hull: [2.2, 1.35], turret: 0.42, turretShape: 'rack',
-  turretX: -0.15, traverse: 2.4, speed: 1.12, hp: 0.95,
-  guns: rack(6, 0.7, 0.35, { len: 1.0, w: 0.14, reload: 2.4, dmg: 1.1, pen: 1.0, spd: 0.75, spread: 0.12, kind: 'rocket', splash: 0.9, recoil: 0.3, range: 1.2 }), desc: 'Halftrack rocket frames. Ripple-fire volleys.' });
+  turretX: -0.15,
+  guns: rack(6, 0.7, 0.35, { len: 1.0, w: 0.14, kind: 'rocket' }), desc: 'Halftrack rocket frames. Ripple-fire volleys.' });
 def('tiger2', { name: 'Tiger II', tier: 3, hull: [2.5, 1.85], size: 1.2, turretShape: 'box', turret: 0.74, turretX: 0.05,
-  traverse: 1.4, hp: 1.95, speed: 0.74, ram: 1.7,
-  guns: [G({ len: 2.35, w: 0.31, dmg: 2.5, spd: 1.35, pen: 1.95, reload: 1.5, brake: true, recoil: 2.2, range: 1.3 })],
+  guns: [G({ len: 2.35, w: 0.31, brake: true })],
   desc: 'King Tiger. Thick hide, long 88.' });
 def('jagdtiger', { name: 'Jagdtiger', tier: 3, style: 'casemate', hull: [2.7, 1.85], size: 1.22, caseX: -0.3, caseW: 1.3,
-  traverse: 0.95, fov: 1.55, hp: 1.9, speed: 0.66,
-  guns: [G({ len: 2.65, w: 0.34, dmg: 3.7, spd: 1.75, pen: 2.6, reload: 2.1, brake: true, range: 1.75, recoil: 3 })],
+  guns: [G({ len: 2.65, w: 0.34, brake: true })],
   desc: '128mm. Nothing survives a clean hit.' });
 def('sturmtiger', { name: 'Sturmtiger', tier: 3, style: 'casemate', hull: [2.3, 1.85], size: 1.15, caseX: 0.05, caseW: 1.5,
-  traverse: 1.3, hp: 1.9, speed: 0.72,
-  guns: [G({ len: 0.85, w: 0.62, dmg: 4.5, spd: 0.55, pen: 3.4, reload: 3.0, size: 1.3, kind: 'rocket', recoil: 2, range: 1.3, splash: 2.6 })],
+  guns: [G({ len: 0.85, w: 0.62, size: 1.3, kind: 'rocket' })],
   desc: '380mm rocket mortar. Flattens everything.' });
-def('kugelblitz', { name: 'Kugelblitz', tier: 3, hull: [2.15, 1.6], turretShape: 'ball', turret: 0.58, traverse: 6, speed: 1.08,
-  guns: twin(0.09, { len: 1.75, w: 0.14, reload: 0.17, dmg: 0.62, pen: 0.95, spread: 0.07, kind: 'mg', recoil: 0.2 }),
+def('kugelblitz', { name: 'Kugelblitz', tier: 3, hull: [2.15, 1.6], turretShape: 'ball', turret: 0.58,
+  guns: twin(0.09, { len: 1.75, w: 0.14, kind: 'mg' }),
   desc: 'Twin 30mm cannons in a ball turret.' });
 def('panzerwerfer', { name: 'Panzerwerfer 42', tier: 3, style: 'halftrack', hull: [2.3, 1.4], turret: 0.5, turretShape: 'rack',
-  turretX: -0.15, traverse: 2.2, speed: 1.08, hp: 1.05,
-  guns: rack(10, 0.8, 0.45, { len: 1.05, w: 0.11, reload: 2.7, dmg: 1.25, pen: 1.1, spd: 0.8, spread: 0.11, kind: 'rocket', splash: 1.0, recoil: 0.25, range: 1.3 }),
+  turretX: -0.15,
+  guns: rack(10, 0.8, 0.45, { len: 1.05, w: 0.11, kind: 'rocket' }),
   desc: 'Ten-tube launcher. Saturate the area.' });
 
 // ---- Soviet Union ----
 FACTION = 'su';
 def('t26', { name: 'T-26', tier: 0, hull: [1.85, 1.4], size: 0.9, turretShape: 'round', turret: 0.5, turretX: 0.05,
-  traverse: 3.8, speed: 1.0, hp: 0.8,
-  guns: [G({ len: 1.3, w: 0.19, reload: 0.48, dmg: 0.55, spd: 1.1, pen: 0.78, spread: 0.05, recoil: 0.5 })],
+  guns: [G({ len: 1.3, w: 0.19 })],
   desc: 'Pre-war light infantry tank with a 45mm gun.' });
 def('bt7', { name: 'BT-7', tier: 1, hull: [2.0, 1.4], size: 0.92, turretShape: 'round', turret: 0.52, turretX: 0.1,
-  traverse: 4.0, speed: 1.4, hp: 0.75,
-  guns: [G({ len: 1.35, w: 0.19, reload: 0.46, dmg: 0.56, spd: 1.12, pen: 0.8, spread: 0.05, recoil: 0.5 })],
+  guns: [G({ len: 1.35, w: 0.19 })],
   desc: 'Fast tank. Outruns anything on the steppe.' });
 def('t28', { name: 'T-28', tier: 1, hull: [2.4, 1.6], size: 1.05, turretShape: 'round', turret: 0.6, turretX: 0.05,
-  traverse: 2.6, speed: 0.88, hp: 1.15,
-  guns: [G({ len: 1.3, w: 0.3, dmg: 1.1, spd: 0.95, pen: 0.95, reload: 1.1, recoil: 1.2 })],
+  guns: [G({ len: 1.3, w: 0.3 })],
   desc: 'Multi-turret medium. Short 76mm and two MG turrets.' });
-def('t34', { name: 'T-34-76', tier: 0, turretShape: 'hex', turret: 0.58, turretX: 0.18, traverse: 2.8, speed: 1.05,
+def('t34', { name: 'T-34-76', tier: 0, turretShape: 'hex', turret: 0.58, turretX: 0.18,
   guns: [G({ len: 1.45, w: 0.29 })],
   desc: 'Sloped armor, wide tracks. Backbone of the Red Army.' });
-def('kv1s', { name: 'KV-1S', tier: 1, hull: [2.15, 1.7], turretShape: 'hex', turret: 0.65, turretX: 0.05, traverse: 2.4,
-  hp: 1.3, speed: 0.92, ram: 1.2,
-  guns: [G({ len: 1.6, w: 0.3, dmg: 1.35, spd: 1.1, pen: 1.15 })],
+def('kv1s', { name: 'KV-1S', tier: 1, hull: [2.15, 1.7], turretShape: 'hex', turret: 0.65, turretX: 0.05,
+  guns: [G({ len: 1.6, w: 0.3 })],
   desc: 'Heavy tank. Soaks hits, hits back.' });
-def('su100', { name: 'SU-100', tier: 3, style: 'casemate', hull: [2.3, 1.65], caseX: 0.1, caseW: 1.25, traverse: 1.6, fov: 1.52,
-  hp: 1.45, speed: 0.98,
-  guns: [G({ len: 2.55, w: 0.28, dmg: 3.0, spd: 1.8, pen: 2.3, reload: 1.75, range: 1.7, recoil: 2.6 })],
+def('su100', { name: 'SU-100', tier: 3, style: 'casemate', hull: [2.3, 1.65], caseX: 0.1, caseW: 1.25,
+  guns: [G({ len: 2.55, w: 0.28 })],
   desc: '100mm sniper. Reaches across the steppe.' });
-def('su122', { name: 'SU-122', tier: 1, style: 'casemate', hull: [2.05, 1.6], caseX: 0.15, caseW: 1.2, traverse: 2.0, hp: 1.12,
-  guns: [G({ len: 1.3, w: 0.4, dmg: 1.9, pen: 1.5, spd: 0.8, reload: 1.55, recoil: 2, size: 1.05, splash: 1.0 })], desc: '122mm assault howitzer. Bursting shells.' });
+def('su122', { name: 'SU-122', tier: 1, style: 'casemate', hull: [2.05, 1.6], caseX: 0.15, caseW: 1.2,
+  guns: [G({ len: 1.3, w: 0.4, size: 1.05 })], desc: '122mm assault howitzer. Bursting shells.' });
 def('su76', { name: 'SU-76', tier: 1, style: 'casemate', hull: [2.0, 1.4], size: 0.9, caseX: -0.25, caseW: 1.0,
-  traverse: 2.4, speed: 1.12, hp: 0.85, fov: 1.15,
-  guns: [G({ len: 1.85, w: 0.24, dmg: 1.3, spd: 1.3, pen: 1.2, reload: 1.05, range: 1.2, recoil: 1.4 })],
+  guns: [G({ len: 1.85, w: 0.24 })],
   desc: 'Light self-propelled gun with the ZiS-3 76mm.' });
 def('t70', { name: 'T-70', tier: 1, hull: [1.85, 1.4], size: 0.92, turret: 0.5, turretShape: 'hex', turretX: -0.05,
-  traverse: 4.2, speed: 1.25, hp: 0.82,
-  guns: [G({ len: 1.35, w: 0.2, reload: 0.42, dmg: 0.55, spd: 1.15, pen: 0.8, spread: 0.05, recoil: 0.5 })], desc: 'Light tank. Fast, quick-firing 45mm.' });
-def('kv85', { name: 'KV-85', tier: 2, hull: [2.25, 1.75], size: 1.08, turretShape: 'round', turret: 0.7, traverse: 1.9,
-  hp: 1.7, speed: 0.84, ram: 1.4,
-  guns: [G({ len: 1.95, w: 0.31, dmg: 2.0, spd: 1.2, pen: 1.6, reload: 1.4, recoil: 2 })], desc: '85mm heavy. Built to break Tigers.' });
-def('t3485', { name: 'T-34-85', tier: 2, hull: [2.1, 1.6], turretShape: 'round', turret: 0.64, turretX: 0.12, traverse: 2.6,
-  fov: 1.22, speed: 1.1, hp: 1.1,
-  guns: [G({ len: 2.05, w: 0.26, dmg: 1.35, spd: 1.45, pen: 1.4, reload: 1.05, range: 1.35 })], desc: 'Upgunned T-34. Fast and far-reaching.' });
-def('su152', { name: 'SU-152', tier: 2, style: 'casemate', hull: [2.3, 1.75], size: 1.08, caseX: 0, caseW: 1.4, traverse: 1.4,
-  hp: 1.55, speed: 0.82,
-  guns: [G({ len: 1.55, w: 0.46, dmg: 3.0, pen: 2.3, spd: 0.85, reload: 2.0, recoil: 3, size: 1.1, splash: 1.4, brake: true })], desc: '"Zveroboy" — the beast killer.' });
-def('su85', { name: 'SU-85', tier: 2, style: 'casemate', hull: [2.1, 1.6], caseX: 0.1, caseW: 1.2, traverse: 1.7, fov: 1.38,
-  hp: 1.2, speed: 1.0,
-  guns: [G({ len: 2.3, w: 0.26, dmg: 2.2, spd: 1.65, pen: 1.8, reload: 1.45, range: 1.55, recoil: 2 })], desc: 'Tank destroyer. Long-range 85mm.' });
-def('zsu37', { name: 'ZSU-37', tier: 2, hull: [1.95, 1.45], turretShape: 'open', turret: 0.58, traverse: 5, speed: 1.18, hp: 0.95,
-  guns: [G({ len: 1.75, w: 0.15, reload: 0.15, dmg: 0.5, pen: 0.8, spread: 0.09, kind: 'mg', recoil: 0.2, brake: true })], desc: '37mm autocannon. An endless stream of fire.' });
+  guns: [G({ len: 1.35, w: 0.2 })], desc: 'Light tank. Fast, quick-firing 45mm.' });
+def('kv85', { name: 'KV-85', tier: 2, hull: [2.25, 1.75], size: 1.08, turretShape: 'round', turret: 0.7,
+  guns: [G({ len: 1.95, w: 0.31 })], desc: '85mm heavy. Built to break Tigers.' });
+def('t3485', { name: 'T-34-85', tier: 2, hull: [2.1, 1.6], turretShape: 'round', turret: 0.64, turretX: 0.12,
+  guns: [G({ len: 2.05, w: 0.26 })], desc: 'Upgunned T-34. Fast and far-reaching.' });
+def('su152', { name: 'SU-152', tier: 2, style: 'casemate', hull: [2.3, 1.75], size: 1.08, caseX: 0, caseW: 1.4,
+  guns: [G({ len: 1.55, w: 0.46, size: 1.1, brake: true })], desc: '"Zveroboy" — the beast killer.' });
+def('su85', { name: 'SU-85', tier: 2, style: 'casemate', hull: [2.1, 1.6], caseX: 0.1, caseW: 1.2,
+  guns: [G({ len: 2.3, w: 0.26 })], desc: 'Tank destroyer. Long-range 85mm.' });
+def('zsu37', { name: 'ZSU-37', tier: 2, hull: [1.95, 1.45], turretShape: 'open', turret: 0.58,
+  guns: [G({ len: 1.75, w: 0.15, kind: 'mg', brake: true })], desc: '37mm autocannon. An endless stream of fire.' });
 def('katyusha', { name: 'Katyusha', tier: 2, style: 'truck', hull: [2.3, 1.3], turret: 0.5, turretShape: 'rack', turretX: -0.25,
-  traverse: 2.2, speed: 1.1, hp: 0.9,
-  guns: rack(8, 0.8, 0.4, { len: 1.2, w: 0.1, reload: 2.6, dmg: 1.15, pen: 1.0, spd: 0.78, spread: 0.13, kind: 'rocket', splash: 1.0, recoil: 0.2, range: 1.25 }), desc: 'BM-13 rocket truck. Stalin’s organ.' });
-def('is2', { name: 'IS-2', tier: 3, hull: [2.45, 1.85], size: 1.18, turretShape: 'round', turret: 0.72, turretX: 0.1, traverse: 1.5,
-  hp: 1.95, speed: 0.78, ram: 1.7,
-  guns: [G({ len: 2.1, w: 0.38, dmg: 3.0, spd: 1.25, pen: 2.1, reload: 1.85, brake: true, recoil: 2.6, size: 1.08 })],
+  guns: rack(8, 0.8, 0.4, { len: 1.2, w: 0.1, kind: 'rocket' }), desc: 'BM-13 rocket truck. Stalin’s organ.' });
+def('is2', { name: 'IS-2', tier: 3, hull: [2.45, 1.85], size: 1.18, turretShape: 'round', turret: 0.72, turretX: 0.1,
+  guns: [G({ len: 2.1, w: 0.38, brake: true, size: 1.08 })],
   desc: '122mm heavy breakthrough tank.' });
-def('isu152', { name: 'ISU-152', tier: 3, style: 'casemate', hull: [2.5, 1.85], size: 1.2, caseX: 0.05, caseW: 1.5, traverse: 1.2,
-  hp: 2.0, speed: 0.72,
-  guns: [G({ len: 1.8, w: 0.52, dmg: 4.4, pen: 3.0, spd: 0.9, reload: 2.6, recoil: 3.4, size: 1.2, splash: 1.9, brake: true })],
+def('isu152', { name: 'ISU-152', tier: 3, style: 'casemate', hull: [2.5, 1.85], size: 1.2, caseX: 0.05, caseW: 1.5,
+  guns: [G({ len: 1.8, w: 0.52, size: 1.2, brake: true })],
   desc: '152mm on a heavy hull. Cracks anything.' });
 def('m17', { name: 'M17 MGMC', tier: 3, style: 'halftrack', hull: [2.25, 1.35], turret: 0.45, turretShape: 'open', turretX: -0.1,
-  traverse: 6.5, speed: 1.22, hp: 0.95,
-  guns: quad({ len: 1.45, w: 0.09, reload: 0.2, dmg: 0.42, pen: 0.75, spread: 0.09, kind: 'mg', recoil: 0.1 }),
+  guns: quad({ len: 1.45, w: 0.09, kind: 'mg' }),
   desc: 'Lend-Lease quad .50 cal halftrack.' });
 def('bm31', { name: 'BM-31-12', tier: 3, style: 'truck', hull: [2.4, 1.35], turret: 0.55, turretShape: 'rack', turretX: -0.25,
-  traverse: 2.0, speed: 1.06, hp: 1.0,
-  guns: rack(12, 0.9, 0.45, { len: 1.15, w: 0.1, reload: 3.0, dmg: 1.6, pen: 1.3, spd: 0.75, spread: 0.13, kind: 'rocket', splash: 1.3, recoil: 0.25, range: 1.3 }),
+  guns: rack(12, 0.9, 0.45, { len: 1.15, w: 0.1, kind: 'rocket' }),
   desc: '300mm rockets. The big organ.' });
 
 // ---- Italy (not playable yet) ----
 FACTION = 'it';
 def('l640', { name: 'L6/40', tier: 0, hull: [1.7, 1.3], size: 0.84, turretShape: 'box', turret: 0.44, turretX: -0.05,
-  traverse: 4.2, speed: 1.15, hp: 0.68,
-  guns: [G({ len: 1.1, w: 0.15, clip: 8, cycle: 0.3, reload: 2.0, dmg: 0.38, spd: 1.1, pen: 0.55, spread: 0.06, recoil: 0.3 })],
+  guns: [G({ len: 1.1, w: 0.15 })],
   desc: 'Light tank with a 20mm Breda autocannon.' });
 def('m1340', { name: 'M13/40', tier: 0, hull: [1.95, 1.4], size: 0.92, turretShape: 'box', turret: 0.52, turretX: 0.05,
-  traverse: 3.0, speed: 0.92, hp: 0.9,
-  guns: [G({ len: 1.35, w: 0.2, reload: 0.6, dmg: 0.75, spd: 1.1, pen: 0.85, recoil: 0.7 })],
+  guns: [G({ len: 1.35, w: 0.2 })],
   desc: 'Medium tank with a 47mm gun.' });
-def('p2640', { name: 'P26/40', tier: 2, hull: [2.15, 1.6], turretShape: 'box', turret: 0.62, traverse: 2.6, speed: 0.95, hp: 1.25,
-  guns: [G({ len: 1.55, w: 0.28, dmg: 1.2, spd: 1.1, pen: 1.05, recoil: 1.2 })],
+def('p2640', { name: 'P26/40', tier: 2, hull: [2.15, 1.6], turretShape: 'box', turret: 0.62,
+  guns: [G({ len: 1.55, w: 0.28 })],
   desc: 'Heavy tank with a 75mm gun.' });
 def('sem7518', { name: 'Semovente da 75/18', tier: 1, style: 'casemate', hull: [1.95, 1.45], size: 0.92, caseX: 0, caseW: 1.15,
-  traverse: 2.0, hp: 1.0, speed: 0.95,
-  guns: [G({ len: 1.1, w: 0.3, dmg: 1.3, spd: 0.85, pen: 1.2, reload: 1.2, recoil: 1.4, splash: 0.6 })],
+  guns: [G({ len: 1.1, w: 0.3 })],
   desc: 'Low assault gun with a short 75mm howitzer.' });
 
 // ---- United States (not playable yet) ----
 FACTION = 'us';
 def('m3stuart', { name: 'M3 Stuart', tier: 0, hull: [1.85, 1.45], size: 0.9, turretShape: 'round', turret: 0.5, turretX: 0.02,
-  traverse: 4.4, speed: 1.3, hp: 0.8,
-  guns: [G({ len: 1.3, w: 0.18, reload: 0.48, dmg: 0.58, spd: 1.15, pen: 0.8, spread: 0.05, recoil: 0.5 })],
+  guns: [G({ len: 1.3, w: 0.18 })],
   desc: 'Fast light tank with a 37mm gun.' });
 def('m4sherman', { name: 'M4 Sherman', tier: 1, hull: [2.1, 1.6], turretShape: 'round', turret: 0.62, turretX: 0.05,
-  traverse: 3.4, speed: 1.05, hp: 1.1,
-  guns: [G({ len: 1.5, w: 0.28, dmg: 1.15, spd: 1.1, pen: 1.0 })],
+  guns: [G({ len: 1.5, w: 0.28 })],
   desc: 'Reliable medium tank with a 75mm gun and a quick turret.' });
 def('m26', { name: 'M26 Pershing', tier: 3, hull: [2.35, 1.75], size: 1.1, turretShape: 'round', turret: 0.7, turretX: 0.05,
-  traverse: 2.2, speed: 0.92, hp: 1.6,
-  guns: [G({ len: 2.15, w: 0.3, dmg: 2.0, spd: 1.45, pen: 1.75, reload: 1.35, brake: true, recoil: 2, range: 1.3 })],
+  guns: [G({ len: 2.15, w: 0.3, brake: true })],
   desc: 'Heavy tank with a 90mm gun.' });
-def('m10', { name: 'M10 Wolverine', tier: 2, hull: [2.15, 1.65], turretShape: 'open', turret: 0.66, traverse: 1.7, speed: 1.02,
-  hp: 1.05, fov: 1.3,
-  guns: [G({ len: 2.0, w: 0.25, dmg: 1.6, spd: 1.45, pen: 1.5, reload: 1.2, range: 1.4, recoil: 1.6 })],
+def('m10', { name: 'M10 Wolverine', tier: 2, hull: [2.15, 1.65], turretShape: 'open', turret: 0.66,
+  guns: [G({ len: 2.0, w: 0.25 })],
   desc: 'Open-topped tank destroyer with a 3-inch gun.' });
 
 // ---- United Kingdom (not playable yet) ----
 FACTION = 'gb';
 def('tetrarch', { name: 'Tetrarch', tier: 0, hull: [1.75, 1.35], size: 0.86, turretShape: 'box', turret: 0.46,
-  traverse: 4.3, speed: 1.28, hp: 0.72,
-  guns: [G({ len: 1.3, w: 0.17, reload: 0.46, dmg: 0.6, spd: 1.2, pen: 0.85, spread: 0.05, recoil: 0.5 })],
+  guns: [G({ len: 1.3, w: 0.17 })],
   desc: 'Airborne light tank with a 2-pounder gun.' });
 def('cromwell', { name: 'Cromwell', tier: 2, hull: [2.15, 1.6], turretShape: 'box', turret: 0.62, turretX: 0.02,
-  traverse: 3.2, speed: 1.3, hp: 1.1,
-  guns: [G({ len: 1.55, w: 0.27, dmg: 1.15, spd: 1.1, pen: 1.0 })],
+  guns: [G({ len: 1.55, w: 0.27 })],
   desc: 'Fast cruiser tank with a 75mm gun.' });
 def('churchill', { name: 'Churchill VII', tier: 2, hull: [2.6, 1.7], size: 1.12, turretShape: 'box', turret: 0.62, turretX: 0.12,
-  traverse: 2.4, speed: 0.7, hp: 1.9, ram: 1.5,
-  guns: [G({ len: 1.5, w: 0.28, dmg: 1.15, spd: 1.1, pen: 1.0 })],
+  guns: [G({ len: 1.5, w: 0.28 })],
   desc: 'Slow, very heavily armoured infantry tank.' });
-def('achilles', { name: 'Achilles', tier: 3, hull: [2.15, 1.65], turretShape: 'open', turret: 0.66, traverse: 1.7, speed: 1.02,
-  hp: 1.05, fov: 1.4,
-  guns: [G({ len: 2.5, w: 0.26, dmg: 2.3, spd: 1.75, pen: 1.95, reload: 1.4, range: 1.55, recoil: 2, brake: true })],
+def('achilles', { name: 'Achilles', tier: 3, hull: [2.15, 1.65], turretShape: 'open', turret: 0.66,
+  guns: [G({ len: 2.5, w: 0.26, brake: true })],
   desc: 'The M10 rebuilt with the British 17-pounder.' });
 
 const START_CLASS = { de: 'pz3', su: 't34' };
-// main gun calibre in mm (shell guns): drives the firing sound on clients
-const CALIBRE = {
-  pz2c: 20, luchs: 20, pz38t: 37, pz3: 50, pz4: 75, stug: 75, hetzer: 75, jgpz4: 75, panther: 75,
-  tiger: 88, ferdinand: 88, tiger2: 88, jagdpanther: 88, jagdtiger: 128, brummbaer: 150,
-  t26: 45, bt7: 45, t70: 45, t28: 76, t34: 76, kv1s: 76, su76: 76, kv85: 85, t3485: 85, su85: 85,
-  su100: 100, su122: 122, is2: 122, su152: 152, isu152: 152,
-  l640: 20, m1340: 47, p2640: 75, sem7518: 75,
-  m3stuart: 37, m4sherman: 75, m26: 90, m10: 76,
-  tetrarch: 40, cromwell: 75, churchill: 75, achilles: 76,
-};
-for (const id in CALIBRE) for (const g of CLASSES[id].guns) if (g.kind === 'shell') g.mm = CALIBRE[id];
 const CLASS_IDS = Object.keys(CLASSES);
 CLASS_IDS.forEach((id, i) => { CLASSES[id].idx = i; });
 
 // ---------- secondary machine guns (right mouse button) ----------
 // Every MG that can bear on the cursor fires. Rifle-calibre MGs are for soft targets: halftracks,
-// trucks, rear plates, supplies.
-// reload = time between rounds; clip = rounds per belt/drum/pan; mag = seconds to change it once empty
-const MG_TYPES = {
-  mg34: { name: 'MG 34', dmg: 0.22, pen: 0.5, reload: 0.09, spread: 0.07, spd: 1.15, range: 0.85, clip: 50, mag: 4 },   // 50-round belt drum
-  dt:   { name: 'DT',    dmg: 0.2,  pen: 0.5, reload: 0.1,  spread: 0.07, spd: 1.15, range: 0.85, clip: 63, mag: 4.5 }, // 63-round pan
-  dshk: { name: 'DShK',  dmg: 0.38, pen: 0.9, reload: 0.13, spread: 0.06, spd: 1.2,  range: 0.95, clip: 50, mag: 5 },   // 50-round belt box
-  breda38: { name: 'Breda 38', dmg: 0.2, pen: 0.5, reload: 0.12, spread: 0.07, spd: 1.1, range: 0.85, clip: 24, mag: 3.5 }, // 24-round box
-  m1919: { name: 'M1919', dmg: 0.2,  pen: 0.5, reload: 0.1,  spread: 0.07, spd: 1.15, range: 0.85, clip: 50, mag: 4 },     // .30 cal belt
-  m2hb:  { name: 'M2 .50', dmg: 0.38, pen: 0.9, reload: 0.12, spread: 0.06, spd: 1.2,  range: 0.95, clip: 50, mag: 5 },     // .50 cal belt
-  besa:  { name: 'BESA',  dmg: 0.21, pen: 0.5, reload: 0.09, spread: 0.07, spd: 1.15, range: 0.85, clip: 50, mag: 4 },     // 7.92mm belt
-};
+// trucks, rear plates, supplies. The MG types and their stats are in armor.js (MGS).
 // Mount fields: f = frame it rides on ('hull', or 'turret' = turret / casemate superstructure),
 // x/y = position in tank radii within that frame (+x forward, +y right), b = rest bearing relative
 // to the frame, arc = traverse either side of b (PI = free-swinging pintle), len = barrel length.
@@ -412,7 +360,7 @@ const MG_FIT = {
   cromwell:    c => [BOW('besa', c)],
   churchill:   c => [BOW('besa', c)],
 };
-for (const id in MG_FIT) CLASSES[id].mgs = MG_FIT[id](CLASSES[id]).map(m => Object.assign({}, MG_TYPES[m.t], m));
+for (const id in MG_FIT) CLASSES[id].mgs = MG_FIT[id](CLASSES[id]).map(m => Object.assign({}, ARMOR.MGS[m.t], m));
 // short card/HUD description, e.g. "Bow MG 34, roof MG 34"
 function mgSummary(c) {
   if (!c.mgs) return '';
@@ -424,10 +372,10 @@ function mgSummary(c) {
 // neutral: regenerative/electric transmissions that can counter-rotate the tracks and pivot on the spot.
 // clutch:  clutch-brake / simple planetary steering; stationary they can only swing around one braked track.
 // wheel:   halftracks and trucks steer with front wheels, so they must be rolling to turn at all.
-const NEUTRAL_STEER = ['tiger', 'tiger2', 'panther', 'jagdpanther', 'jagdtiger', 'sturmtiger', 'ferdinand', 'cromwell', 'churchill'];
+// Neutral steer is set per vehicle in armor.js (steer: 'neutral'); otherwise it follows from the running gear.
 for (const id of CLASS_IDS) {
   const c = CLASSES[id];
-  c.steer = NEUTRAL_STEER.includes(id) ? 'neutral' : c.style === 'halftrack' || c.style === 'truck' ? 'wheel' : 'clutch';
+  if (!c.steer) c.steer = c.style === 'halftrack' || c.style === 'truck' ? 'wheel' : 'clutch';
 }
 const STEER_INFO = {
   neutral: 'Neutral steer: pivots in place.',

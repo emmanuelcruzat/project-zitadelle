@@ -20,10 +20,8 @@ const ARMOR = require('../shared/armor.js');
 const RICOCHET_DEG = 70, OVERMATCH = 3, PEN_SPREAD = 0.1, NONPEN_DMG = 0;
 // APCR rounds: more penetration (APCR_PEN in armor.js) but this much of AP's damage
 const APCR_DMG = 0.75;
-const MG_PEN = { mg34: 8, dt: 8, breda38: 8, m1919: 8, besa: 8, dshk: 20, m2hb: 20 };   // MG penetration in mm
-const MG_CAL = { dshk: 12.7, m2hb: 12.7 };                                               // MG calibre (default 7.9)
 {
-  const missing = CLASS_IDS.filter(id => CLASSES[id].enabled && !ARMOR.VEHICLES[id]);
+  const missing = CLASS_IDS.filter(id => CLASSES[id].enabled && !ARMOR.armorOf(id));
   if (missing.length) console.warn('armor.js has no entry for playable vehicles:', missing.join(', '));
 }
 
@@ -109,6 +107,17 @@ function createGame(opts = {}) {
   const reserveLeft = team => poolSum(reserveTotal(team));
   const rearOk = (k, team) => { const r = REARS[k]; return !!r && r.team === team && !(r.line && lineDead[r.line]); };
   const rearsOf = team => REARS.map((r, k) => k).filter(k => rearOk(k, team));
+  // Logistics load (costs and limit in armor.js), stored as the time it drains to zero. Players keep it on
+  // their connection so leaving and rejoining doesn't clear it; bots keep it on the tank.
+  const logiHolder = t => t.client || t;
+  const logiLoad = t => Math.max(0, (logiHolder(t).logiEnd || 0) - time);
+  const logiWait = (t, id) => Math.max(0, logiLoad(t) + ARMOR.logiOf(id) - ARMOR.LOGI_LIMIT);   // seconds until id fits
+  // Spotting: light tanks scout, marking enemies they see. Human teammates get the marker; allied bots can
+  // engage a marked enemy out to SPOT_REACH times their own sight for SPOT_TIME seconds.
+  const SPOT_TIME = 8, SPOT_REACH = 1.3, SCOUT_MARK_EVERY = 2.5;
+  const spotted = { de: new Map(), su: new Map() };          // enemy tank -> time the mark runs out
+  const isSpotted = (team, e) => (spotted[team].get(e) || 0) > time;
+  const isScout = c => !!CATS[c.cat] && CATS[c.cat].key === 'lt';
   resetPoints();
   let bunkerRespawn = 0;
   let events = [];        // positional/global events since the last snapshot
@@ -257,7 +266,7 @@ function createGame(opts = {}) {
         vx: Math.cos(fa) * spd + this.vx * 0.2, vy: Math.sin(fa) * spd + this.vy * 0.2,
         r: 3, dmg: this.bDmg * m.dmg, hp: 8 * m.pen,
         team: this.team, owner: this, life: 1.45 * m.range, kind: 'mg',
-        pen: MG_PEN[m.t] || 8, cal: MG_CAL[m.t] || 7.9, splash: 0, accel: 0, maxSpd: 0, hits: [],
+        pen: m.penMm || 8, cal: m.cal || 7.9, splash: 0, accel: 0, maxSpd: 0, hits: [],
       });
       this.invuln = 0;
       ev({ e: 'f', id: this.id, g: -1 - i, x: r1(mx), y: r1(my), a: r3(fa), k: KINDS.indexOf('mg'), b: 0, r: r1(r) });
@@ -456,8 +465,9 @@ function createGame(opts = {}) {
 
   function updatePoints(dt) {
     for (const p of points) {
+      // each vehicle counts its capture weight (light tanks 2, see armor.js), not just 1
       let nd = 0, ns = 0;
-      for (const t of tanks) if (t.alive && inZone(t, p)) { if (t.team === 'de') nd++; else ns++; }
+      for (const t of tanks) if (t.alive && inZone(t, p)) { if (t.team === 'de') nd += t.cls.capture; else ns += t.cls.capture; }
       p.nd = nd; p.ns = ns;
       if (!p.active) {
         // locked: nobody can fight for it until a neighbouring point changes hands
@@ -465,8 +475,8 @@ function createGame(opts = {}) {
         p.prog = p.owner ? sgn(p.owner) : 0;
         continue;
       }
-      // whoever has more vehicles in the zone pushes it their way (faster the bigger the margin);
-      // equal numbers freeze it
+      // whichever side has more strength in the zone pushes it their way (faster the bigger the margin);
+      // equal strength freezes it
       p.contested = nd > 0 && ns > 0 && nd === ns;
       if (p.contested || phase !== 'play') continue;
       // the bigger side pushes, but only if it's allowed to fight for this point (or is defending its own)
@@ -516,6 +526,9 @@ function createGame(opts = {}) {
       battleEnd = time + BATTLE_TIME;
       resetPoints();
       bullets.length = 0;
+      // fresh battle, fresh logistics (before the bots below redeploy)
+      for (const c of clients) c.logiEnd = 0;
+      for (const t of tanks) t.logiEnd = 0;
       for (const t of tanks) {
         t.score = t.kills = t.deaths = 0;
         if (t.isBot) { if (t.alive) { t.placeAt(null); t.hp = t.maxHp; } else respawnBot(t); }
@@ -576,21 +589,27 @@ function createGame(opts = {}) {
     // attackers with no spawn given go to the rear of the line they draw from, so the two match
     if (sp == null && t.team === ATTACKER) { const L = poolLine(t.team, null), k = REARS.findIndex(q => q.line === L); if (k >= 0) sp = -1 - k; }
     r = r || [0, 0, 0, 0, 0];
-    const ok = id => CLASSES[id] && CLASSES[id].faction === t.team && CLASSES[id].enabled && r[CLASSES[id].cat] > 0;
+    const inStock = id => CLASSES[id] && CLASSES[id].faction === t.team && CLASSES[id].enabled && r[CLASSES[id].cat] > 0;
+    const ok = id => inStock(id) && logiWait(t, id) <= 0;
     let id = ok(want) ? want : null;
     if (!id) {
       const alt = CLASS_IDS.filter(ok);
       if (!alt.length) {
+        // vehicles are in stock, but the logistics load won't allow any of them yet
+        const loaded = CLASS_IDS.some(inStock);
         t.alive = false; t.hp = 0; t.deathTime = time;
         if (t.x === undefined) { const rr = REARS.find(q => q.team === t.team); t.x = rr.x; t.y = rr.y; }
         t.deathX = t.x; t.deathY = t.y;
-        if (t.client) pev(t, { e: 'die', kn: 'No reserves left', kt: null, kc: '', score: t.score, kills: t.kills, deaths: t.deaths, secs: 0 });
+        if (t.client) pev(t, { e: 'die', kn: loaded ? 'Logistics overloaded' : 'No reserves left', kt: null, kc: '', score: t.score, kills: t.kills, deaths: t.deaths, secs: 0 });
         return false;
       }
       id = ok(START_CLASS[t.team]) ? START_CLASS[t.team] : pick(alt);
-      if (t.client && CLASSES[want] && CLASSES[want].faction === t.team && CLASSES[want].enabled) pev(t, { e: 'm', text: `No ${CATS[CLASSES[want].cat].name.toLowerCase()} left in reserve — deploying a ${CLASSES[id].name}`, d: 3.5 });
+      if (t.client && inStock(want)) pev(t, { e: 'm', text: `Logistics load too high for the ${CLASSES[want].name} (${Math.ceil(logiWait(t, want))} s) — deploying a ${CLASSES[id].name}`, d: 3.5 });
+      else if (t.client && CLASSES[want] && CLASSES[want].faction === t.team && CLASSES[want].enabled) pev(t, { e: 'm', text: `No ${CATS[CLASSES[want].cat].name.toLowerCase()} left in reserve — deploying a ${CLASSES[id].name}`, d: 3.5 });
     }
     r[CLASSES[id].cat]--;
+    const lo = logiHolder(t);
+    lo.logiEnd = Math.max(lo.logiEnd || 0, time) + ARMOR.logiOf(id);
     t.clsId = id;
     t.reset(sp);
     return true;
@@ -675,7 +694,10 @@ function createGame(opts = {}) {
   function botRange(c) {
     if (c.guns.some(g => g.kind === 'rocket')) return 520;
     if (c.guns[0].kind === 'mg') return 300;
-    if (c.fov >= 1.3) return 680;
+    if (isScout(c)) return 650;                              // scouts keep their distance
+    // tank destroyers (not the howitzers, which have splash) hang back and snipe
+    const td = CATS[c.cat] && (CATS[c.cat].key === 'td' || CATS[c.cat].key === 'htd');
+    if (td && !c.guns[0].splash) return 680;
     if (c.guns[0].splash) return 430;
     return 420;
   }
@@ -730,10 +752,11 @@ function createGame(opts = {}) {
   }
   // bots drive whatever their side fields, weighted toward gun tanks
   // bots draw from the reserve roughly in proportion to what's left in each category
-  function botClass(team, sp) {
-    const r = poolFor(team, sp);
+  // (only vehicles the bot's logistics load allows right now)
+  function botClass(t, sp) {
+    const team = t.team, r = poolFor(team, sp);
     if (!r) return null;
-    const ids = CLASS_IDS.filter(id => CLASSES[id].faction === team && CLASSES[id].enabled && r[CLASSES[id].cat] > 0);
+    const ids = CLASS_IDS.filter(id => CLASSES[id].faction === team && CLASSES[id].enabled && r[CLASSES[id].cat] > 0 && logiWait(t, id) <= 0);
     if (!ids.length) return null;
     let tot = 0; for (const id of ids) tot += r[CLASSES[id].cat] / ids.filter(j => CLASSES[j].cat === CLASSES[id].cat).length;
     let x = Math.random() * tot;
@@ -741,9 +764,10 @@ function createGame(opts = {}) {
     return ids[ids.length - 1];
   }
   function respawnBot(t) {
-    const sp = botSpawn(t.team), id = botClass(t.team, sp);
+    const sp = botSpawn(t.team), id = botClass(t, sp);
     if (!id || !deploy(t, id, sp)) { t.alive = false; t.respawnAt = time + 5; return; }
     t.ai = newAi();
+    t.ai.scout = isScout(t.cls); t.ai.markT = 0;      // light tanks scout and mark enemies
   }
   function spawnBot(team) {
     const used = new Set(tanks.map(t => t.fullName));
@@ -862,12 +886,28 @@ function createGame(opts = {}) {
       for (const e of tanks) {
         if (!e.alive || e.team === t.team) continue;
         // targets behind a house count as further away, so bots prefer ones they can actually hit,
-        // and so do ones whose armour they can't get through from here
+        // and so do ones whose armour they can't get through from here; a scout's mark extends the reach
         const ws = weakSpot(t, e);
-        const d = Math.hypot(e.x - t.x, e.y - t.y) * (bldLine(t.x, t.y, e.x, e.y) ? 1.6 : 1) * (ws.ratio >= 1 ? 1 : ws.ratio >= 0.7 ? 1.6 : 2.6);
+        const d = Math.hypot(e.x - t.x, e.y - t.y) * (bldLine(t.x, t.y, e.x, e.y) ? 1.6 : 1) * (ws.ratio >= 1 ? 1 : ws.ratio >= 0.7 ? 1.6 : 2.6)
+          / (isSpotted(t.team, e) ? SPOT_REACH : 1);
         if (d < bd) { bd = d; best = e; }
       }
       ai.tgt = best;
+      // scouts mark the nearest enemy they can see that isn't marked already
+      if (ai.scout && time >= ai.markT && phase === 'play') {
+        let m = null, md = sight;
+        for (const e of tanks) {
+          if (!e.alive || e.team === t.team || isSpotted(t.team, e)) continue;
+          const d = Math.hypot(e.x - t.x, e.y - t.y);
+          if (d < md && !bldLine(t.x, t.y, e.x, e.y)) { md = d; m = e; }
+        }
+        if (m) {
+          ai.markT = time + SCOUT_MARK_EVERY;
+          spotted[t.team].set(m, time + SPOT_TIME);
+          const mk = { e: 'mk', x: r1(m.x), y: r1(m.y), c: m.cls.cat, by: t.name };
+          for (const k of tanks) if (k.client && k.team === t.team) pev(k, mk);
+        }
+      }
       // only plink at nearby obstacles; bots no longer drive off to farm them
       let bo = null, bs = 0;
       for (const o of obstacles) {
@@ -892,12 +932,13 @@ function createGame(opts = {}) {
     if (ai.strafeT <= 0) { ai.strafeT = rand(1, 3); ai.strafe *= -1; }
 
     let mx = 0, my = 0, ax = t.x + Math.cos(t.turA) * 200, ay = t.y + Math.sin(t.turA) * 200, fire = false;
-    if (t.hp < t.maxHp * 0.3 && ai.tgt) ai.retreat = true;
+    if (t.hp < t.maxHp * (ai.scout ? 0.5 : 0.3) && ai.tgt) ai.retreat = true;      // scouts pull out earlier
     const rks = rearsOf(t.team), rear = rks.length ? REARS[rks.reduce((a, b) => (Math.hypot(REARS[a].x - t.x, REARS[a].y - t.y) < Math.hypot(REARS[b].x - t.x, REARS[b].y - t.y) ? a : b))] : null;
     if (t.hp > t.maxHp * 0.75 || !rear || Math.hypot(rear.x - t.x, rear.y - t.y) < 500) ai.retreat = false;
     if (phase !== 'play') { ai.retreat = false; }
 
     const e = ai.tgt && ai.tgt.alive && tanks.includes(ai.tgt) ? ai.tgt : null;
+    const reach = e && isSpotted(t.team, e) ? sight * SPOT_REACH : sight;     // how far out it will engage e
     const gunSpd = t.bSpd * c.guns[0].spd;
     const aimAt = (x, y, vx, vy) => {
       const d = Math.hypot(x - t.x, y - t.y);
@@ -919,7 +960,7 @@ function createGame(opts = {}) {
     if (ai.retreat) {
       const rx = rear.x - t.x, ry = rear.y - t.y, rd = Math.hypot(rx, ry) || 1;
       mx = rx / rd; my = ry / rd;
-      if (e) fire = aimAt(spot.x, spot.y, e.vx, e.vy) && Math.hypot(e.x - t.x, e.y - t.y) < sight * 0.8;
+      if (e) fire = aimAt(spot.x, spot.y, e.vx, e.vy) && Math.hypot(e.x - t.x, e.y - t.y) < reach * 0.8;
     } else {
       // drive to the objective; turrets keep shooting on the way
       const p = points[ai.obj];
@@ -944,8 +985,8 @@ function createGame(opts = {}) {
           else { mx = mx * 0.3 + ux * radial; my = my * 0.3 + uy * radial; }
         }
         // fighting without much driving to do: keep the (angled) front toward the enemy
-        holdFace = c.style !== 'casemate' && Math.hypot(mx, my) < 0.4 && d < sight * 0.85;
-        fire = aimAt(spot.x, spot.y, e.vx, e.vy) && d < sight * 0.85;
+        holdFace = c.style !== 'casemate' && Math.hypot(mx, my) < 0.4 && d < reach * 0.85;
+        fire = aimAt(spot.x, spot.y, e.vx, e.vy) && d < reach * 0.85;
       } else if (ai.ob && !ai.ob.dead) {
         const o = ai.ob;
         fire = aimAt(o.x, o.y, o.vx, o.vy) && Math.hypot(o.x - t.x, o.y - t.y) < 480;
@@ -1390,6 +1431,7 @@ function createGame(opts = {}) {
     snap.rl = LINES.map(L => (lineDead[L] ? null : reserves[ATTACKER][L]));
     snap.ph = phase === 'play' ? 0 : [winner === 'de' ? 1 : 2, Math.ceil(phaseEnd - time), winWhy];
     if (phase === 'play') snap.bt = Math.max(0, Math.ceil(battleEnd - time));   // battle clock
+    snap.lg = r1(Math.max(0, (client.logiEnd || 0) - time));                     // your logistics load (s)
     // leaderboard: [id, team, name, score, kills, deaths, rank, alive]
     if (includeBoard) snap.on = clients.size;   // people connected (playing or on the menu)
     if (includeBoard) snap.lb = tanks.map(k => [k.id, TEAM_IDS.indexOf(k.team), k.name, k.score, k.kills, k.deaths, k.rank, k.alive ? 1 : 0]);

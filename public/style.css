@@ -113,13 +113,15 @@ kbd {
 /* vehicle picker */
 .panel.wide { width: min(780px, calc(100vw - 32px)); }
 .picker { margin-bottom: 16px; }
-.vgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 5px; }
+.vgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 5px; }
+/* tile: preview on the left, name and badges stacked to its right */
 .veh {
   font: inherit; cursor: pointer; color: #d6cca3; background: #15150f; border: 2px solid #3e3a28;
-  padding: 3px 2px 4px; display: flex; flex-direction: column; align-items: center; gap: 1px;
+  padding: 3px 6px 3px 2px; display: flex; flex-direction: row; align-items: center; gap: 6px; text-align: left;
   transition: border-color .12s, background .12s;
 }
-.veh canvas { width: 72px; height: 54px; }
+.veh canvas { width: 72px; height: 54px; flex: none; }
+.veh .vtext { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; }
 .veh span { font-size: 12px; line-height: 1.1; letter-spacing: .3px; }
 .veh:hover { border-color: #7a7250; }
 .veh.sel { border-color: #e7dcb1; background: #2b2a20; color: #fff; }
@@ -130,6 +132,15 @@ kbd {
 .veh .vcat { font-style: normal; font-size: 10px; letter-spacing: .5px; color: #a99f78; line-height: 1; }
 .veh.empty { opacity: .35; cursor: not-allowed; }
 .veh.empty .vcat { color: #e0573f; }
+/* logistics cost: a mini ring (filled clockwise by --f in colour --c) and the time it adds */
+.veh .vlogi { font-style: normal; font-size: 10px; letter-spacing: .5px; color: #d6cca3; line-height: 1;
+  display: flex; align-items: center; gap: 3px; }
+.lring { display: inline-block; width: 11px; height: 11px; border-radius: 50%;
+  background: conic-gradient(var(--c) calc(var(--f) * 360deg), rgba(0,0,0,.55) 0);
+  -webkit-mask: radial-gradient(circle, transparent 2.5px, #000 3px); mask: radial-gradient(circle, transparent 2.5px, #000 3px); }
+/* held back by the logistics load: still selectable, just dimmed */
+.veh.wait canvas, .veh.wait span { opacity: .5; }
+.veh.wait .vlogi { color: #ffb86a; }
 
 /* the Tab leaderboard is drawn on the canvas: hide the panels that would sit on top of it */
 body.board-open #menu, body.board-open .deathcard, body.board-open .deploypanel, body.board-open .mapbar { visibility: hidden; }
