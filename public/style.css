@@ -113,13 +113,15 @@ kbd {
 /* vehicle picker */
 .panel.wide { width: min(780px, calc(100vw - 32px)); }
 .picker { margin-bottom: 16px; }
-.vgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 5px; }
+.vgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 5px; }
+/* tile: preview on the left, name and badges stacked to its right */
 .veh {
   font: inherit; cursor: pointer; color: #d6cca3; background: #15150f; border: 2px solid #3e3a28;
-  padding: 3px 2px 4px; display: flex; flex-direction: column; align-items: center; gap: 1px;
+  padding: 3px 6px 3px 2px; display: flex; flex-direction: row; align-items: center; gap: 6px; text-align: left;
   transition: border-color .12s, background .12s;
 }
-.veh canvas { width: 72px; height: 54px; }
+.veh canvas { width: 72px; height: 54px; flex: none; }
+.veh .vtext { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; }
 .veh span { font-size: 12px; line-height: 1.1; letter-spacing: .3px; }
 .veh:hover { border-color: #7a7250; }
 .veh.sel { border-color: #e7dcb1; background: #2b2a20; color: #fff; }
@@ -130,6 +132,15 @@ kbd {
 .veh .vcat { font-style: normal; font-size: 10px; letter-spacing: .5px; color: #a99f78; line-height: 1; }
 .veh.empty { opacity: .35; cursor: not-allowed; }
 .veh.empty .vcat { color: #e0573f; }
+/* logistics cost: a mini ring (filled clockwise by --f in colour --c) and the time it adds */
+.veh .vlogi { font-style: normal; font-size: 10px; letter-spacing: .5px; color: #d6cca3; line-height: 1;
+  display: flex; align-items: center; gap: 3px; }
+.lring { display: inline-block; width: 11px; height: 11px; border-radius: 50%;
+  background: conic-gradient(var(--c) calc(var(--f) * 360deg), rgba(0,0,0,.55) 0);
+  -webkit-mask: radial-gradient(circle, transparent 2.5px, #000 3px); mask: radial-gradient(circle, transparent 2.5px, #000 3px); }
+/* held back by the logistics load: still selectable, just dimmed */
+.veh.wait canvas, .veh.wait span { opacity: .5; }
+.veh.wait .vlogi { color: #ffb86a; }
 
 /* the Tab leaderboard is drawn on the canvas: hide the panels that would sit on top of it */
 body.board-open #menu, body.board-open .deathcard, body.board-open .deploypanel, body.board-open .mapbar { visibility: hidden; }
@@ -299,6 +310,37 @@ body.end-open .deathcard, body.end-open .deploypanel, body.end-open .mapbar { vi
 .aslot .akey { grid-column: 1; grid-row: 2; justify-self: center; font-size: 10px; line-height: 1.3; color: #d6cca3; margin-top: 3px;
   padding: 0 5px; border: 1px solid #5d5639; border-bottom-width: 2px; background: rgba(21,21,15,0.7); }
 body.board-open .ammobar, body.end-open .ammobar { visibility: hidden; }
+/* component rack, left of the ammo: each component's health fills its tile from the bottom in a colour from
+   green (healthy) through yellow to red (--f, --c); destroyed ones blink red with their repair countdown */
+.parts { position: relative; display: flex; gap: 4px; align-self: center; margin-right: 6px; }
+.part { position: relative; overflow: hidden; width: 40px; padding: 5px 0 4px; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  background: rgba(14,14,10,0.45); border: 1px solid rgba(231,220,177,0.15); border-radius: 4px;
+  color: var(--c, #7fd46a); text-shadow: 0 1px 2px rgba(0,0,0,.9); }
+.part::before { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: calc(var(--f, 1) * 100%);
+  background: var(--c, #7fd46a); opacity: .22; transition: height .25s, background-color .25s; }
+.part svg, .part span { position: relative; }
+.part svg { width: 18px; height: 18px; filter: drop-shadow(0 1px 1px rgba(0,0,0,.8)); }
+.part span { font-size: 8px; letter-spacing: .6px; line-height: 1; }
+.part.down { color: #ff8a6a; border-color: #e0573f; background: rgba(70,18,12,0.75); animation: partblink 1s ease-in-out infinite; }
+.part.down span { font-size: 10px; font-weight: 600; }
+@keyframes partblink { 50% { opacity: .55; } }
+/* machine guns, right of the ammo: a small dial per MG; the ring (--f) empties counterclockwise as the belt
+   runs down and refills in red while the belt is changed. Bright gold when it can bear on the cursor. */
+.mgrack { display: flex; gap: 6px; align-self: center; margin-left: 4px; }
+.mg { display: flex; flex-direction: column; align-items: center; gap: 2px; color: #a99f78; text-shadow: 0 1px 2px rgba(0,0,0,.9); }
+.mgdial { position: relative; width: 32px; height: 32px; border-radius: 50%; background: rgba(14,14,10,0.45); }
+.mgdial i { position: absolute; inset: 0; border-radius: 50%; --rc: #d6cca3;
+  background: conic-gradient(var(--rc) calc(var(--f, 1) * 360deg), rgba(0,0,0,0.5) 0);
+  -webkit-mask: radial-gradient(circle, transparent 11px, #000 12px); mask: radial-gradient(circle, transparent 11px, #000 12px); }
+.mgdial b { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 7.5px;
+  font-weight: 600; letter-spacing: .2px; color: #d6cca3; white-space: nowrap; }
+.mg span { font-size: 8px; letter-spacing: .6px; line-height: 1; }
+.mg.on .mgdial i { --rc: #f6e27a; }
+.mg.on .mgdial { box-shadow: 0 0 7px rgba(246,226,122,0.45); }
+.mg.on b, .mg.on span { color: #f6e27a; }
+.mg.low .mgdial i { --rc: #ffb347; }
+.mg.changing .mgdial i { --rc: #e0573f; }
+.mg.changing b { color: #ff8a6a; }
 
 /* armour card (deploy picker, after hovering a vehicle for a moment) */
 .armortip {
