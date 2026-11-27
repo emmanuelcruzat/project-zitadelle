@@ -1,0 +1,573 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zitadelle · Kursk 1943</title>
+<meta name="description" content="A top-down multiplayer tank game set during Operation Citadel, July 1943. Free in your browser.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Oswald:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #15160f;
+  --bg2: #1d1e16;
+  --panel: #23241a;
+  --line: #3e3b28;
+  --line2: #5d5639;
+  --ink: #e7dcb1;
+  --ink2: #b9ae86;
+  --mute: #857c5c;
+  --amber: #e0a43a;
+  --de: #9aa3a8;
+  --su: #c8483a;
+  --ok: #8fb35a;
+  --mono: 'IBM Plex Mono', ui-monospace, Consolas, monospace;
+  --head: 'Black Ops One', Impact, sans-serif;
+  --body: 'Oswald', 'Arial Narrow', sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--body); font-weight: 400;
+  font-size: 17px; line-height: 1.55; overflow-x: hidden;
+}
+/* film grain over everything */
+body::after {
+  content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 100; opacity: .07;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+a { color: inherit; }
+.skip { position: absolute; left: -999px; top: 8px; background: var(--amber); color: #000; padding: 6px 12px; z-index: 200; }
+.skip:focus { left: 8px; }
+.wrap { width: min(1160px, calc(100% - 32px)); margin: 0 auto; }
+.mono { font-family: var(--mono); font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--mute); }
+.amber { color: var(--amber); }
+
+/* nav */
+nav.top {
+  position: sticky; top: 0; z-index: 50; background: rgba(21,22,15,.88); backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+nav.top .wrap { display: flex; align-items: center; gap: 28px; height: 60px; }
+.logo { font-family: var(--head); font-size: 22px; letter-spacing: 3px; text-decoration: none; color: var(--ink); }
+.logo small { font-family: var(--mono); font-size: 10px; letter-spacing: .2em; color: var(--mute); margin-left: 8px; vertical-align: middle; }
+nav.top ul { display: flex; gap: 22px; list-style: none; margin-left: auto; }
+nav.top ul a { text-decoration: none; color: var(--ink2); font-size: 14px; letter-spacing: .14em; text-transform: uppercase; }
+nav.top ul a:hover { color: var(--ink); }
+.menu-btn { display: none; margin-left: auto; background: none; border: 1px solid var(--line2); color: var(--ink); font: inherit; font-size: 13px; letter-spacing: .14em; padding: 4px 12px; text-transform: uppercase; cursor: pointer; }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 10px; text-decoration: none; cursor: pointer;
+  font-family: var(--body); font-weight: 600; font-size: 15px; letter-spacing: .16em; text-transform: uppercase;
+  padding: 12px 22px; border: 2px solid var(--amber); background: var(--amber); color: #17140a;
+  transition: background .15s, color .15s;
+}
+.btn:hover { background: #f2bb55; }
+.btn.ghost { background: transparent; color: var(--ink); border-color: var(--line2); }
+.btn.ghost:hover { border-color: var(--ink2); background: rgba(231,220,177,.05); }
+.btn.sm { padding: 7px 14px; font-size: 13px; }
+
+/* hero */
+.hero { position: relative; border-bottom: 1px solid var(--line); overflow: hidden; }
+.hero .wrap { display: grid; grid-template-columns: 1.05fr 1fr; gap: 48px; align-items: center; padding: 72px 0 64px; }
+.hud-line { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-bottom: 22px; }
+.hud-line span::before { content: '■ '; color: var(--amber); font-size: 8px; vertical-align: 2px; }
+h1 {
+  font-family: var(--head); font-weight: normal; font-size: clamp(54px, 9vw, 108px); line-height: .95; letter-spacing: 4px;
+  text-shadow: 4px 4px 0 #0b0b07;
+}
+.tagline { font-size: clamp(20px, 2.3vw, 26px); font-weight: 500; color: var(--ink); margin: 18px 0 14px; letter-spacing: .02em; }
+.lede { color: var(--ink2); max-width: 52ch; }
+.ctas { display: flex; flex-wrap: wrap; gap: 12px; margin: 30px 0 34px; }
+.status { display: grid; grid-template-columns: repeat(3, auto); gap: 0; border: 1px solid var(--line); width: max-content; max-width: 100%; }
+.status div { padding: 10px 18px; border-right: 1px solid var(--line); }
+.status div:last-child { border-right: 0; }
+.status b { display: block; font-weight: 500; font-size: 15px; letter-spacing: .04em; }
+.status .live::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); margin-right: 8px; vertical-align: 2px; box-shadow: 0 0 8px var(--ok); animation: blink 2s infinite; }
+@keyframes blink { 50% { opacity: .35; } }
+
+/* the battle map */
+.mapframe { position: relative; border: 1px solid var(--line2); background: #1a1b13; aspect-ratio: 1; }
+.mapframe svg { display: block; width: 100%; height: 100%; }
+.mapframe .corner { position: absolute; font-family: var(--mono); font-size: 10.5px; letter-spacing: .14em; color: var(--mute); text-transform: uppercase; }
+.mapframe .tl { top: 10px; left: 12px; } .mapframe .tr { top: 10px; right: 12px; text-align: right; }
+.mapframe .bl { bottom: 10px; left: 12px; } .mapframe .br { bottom: 10px; right: 12px; text-align: right; }
+.mapframe .scan { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(180deg, transparent 0, rgba(224,164,58,.07) 50%, transparent 100%); height: 18%; animation: scan 7s linear infinite; }
+@keyframes scan { from { transform: translateY(-100%); } to { transform: translateY(560%); } }
+.pt-label { font-family: var(--mono); font-size: 13px; fill: var(--ink2); letter-spacing: .05em; }
+.pt-id { font-family: var(--mono); font-size: 13px; font-weight: 500; fill: var(--ink); }
+.advance { stroke-dasharray: 10 8; animation: march 1.6s linear infinite; }
+@keyframes march { to { stroke-dashoffset: -36; } }
+.pulse { animation: pulse 2.4s ease-out infinite; transform-origin: 630px 170px; }
+@keyframes pulse { 0% { transform: scale(1); opacity: .6; } 100% { transform: scale(1.6); opacity: 0; } }
+
+/* sections */
+section { padding: 96px 0; border-bottom: 1px solid var(--line); }
+.sec-head { display: flex; align-items: baseline; gap: 18px; margin-bottom: 14px; }
+.sec-head .no { font-family: var(--mono); color: var(--amber); font-size: 13px; letter-spacing: .14em; }
+h2 { font-family: var(--head); font-weight: normal; font-size: clamp(32px, 4.4vw, 52px); line-height: 1.05; letter-spacing: 1.5px; }
+.intro { color: var(--ink2); max-width: 62ch; margin-top: 14px; font-size: 18px; }
+
+.statement { background: var(--bg2); }
+.statement p.big { font-size: clamp(24px, 3.2vw, 38px); line-height: 1.3; font-weight: 500; max-width: 30ch; letter-spacing: .01em; }
+.statement p.big em { font-style: normal; color: var(--amber); }
+.statement .row { display: grid; grid-template-columns: 1fr auto; gap: 40px; align-items: end; }
+.facts { display: grid; grid-template-columns: repeat(2, auto); gap: 18px 40px; }
+.facts b { display: block; font-family: var(--head); font-weight: normal; font-size: 34px; line-height: 1; color: var(--ink); }
+
+/* pillars */
+.pillars { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--line); margin-top: 48px; }
+.pillar { padding: 26px 22px 28px; border-right: 1px solid var(--line); background: var(--bg); transition: background .2s; }
+.pillar:last-child { border-right: 0; }
+.pillar:hover { background: var(--bg2); }
+.pillar .n { font-family: var(--head); font-size: 40px; color: var(--line2); line-height: 1; }
+.pillar h3 { font-size: 21px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; margin: 16px 0 8px; }
+.pillar p { color: var(--ink2); font-size: 15.5px; }
+.pillar ul { list-style: none; margin-top: 14px; border-top: 1px dashed var(--line); padding-top: 12px; }
+.pillar li { font-family: var(--mono); font-size: 11.5px; letter-spacing: .06em; color: var(--mute); padding: 2px 0; }
+.pillar li::before { content: '› '; color: var(--amber); }
+
+/* schematic */
+.schem { display: grid; grid-template-columns: 1.25fr 1fr; gap: 48px; align-items: center; margin-top: 48px; }
+.blueprint { border: 1px solid var(--line2); background:
+  linear-gradient(var(--line) 1px, transparent 1px) 0 0 / 24px 24px,
+  linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0 / 24px 24px, #191a12; background-blend-mode: normal; position: relative; }
+.blueprint::before { content: ''; position: absolute; inset: 0; background: rgba(25,26,18,.72); }
+.blueprint svg { position: relative; display: block; width: 100%; height: auto; }
+.blueprint .cap { position: relative; display: flex; justify-content: space-between; padding: 10px 14px; border-top: 1px solid var(--line); }
+.callout { font-family: var(--mono); font-size: 13px; letter-spacing: .1em; fill: var(--ink); }
+.callout-sub { font-family: var(--mono); font-size: 11px; letter-spacing: .06em; fill: var(--mute); }
+.comp-list { display: grid; gap: 0; border: 1px solid var(--line); }
+.comp { display: grid; grid-template-columns: 30px 1fr auto; gap: 14px; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.comp:last-child { border-bottom: 0; }
+.comp .sw { width: 14px; height: 14px; border: 2px solid currentColor; }
+.comp b { font-weight: 600; letter-spacing: .08em; text-transform: uppercase; font-size: 15px; }
+.comp p { color: var(--ink2); font-size: 14.5px; line-height: 1.45; }
+.comp .t { font-family: var(--mono); font-size: 12px; color: var(--mute); text-align: right; white-space: nowrap; }
+
+/* factions */
+.factions { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin-top: 48px; border: 1px solid var(--line); }
+.fac { padding: 32px 30px; position: relative; overflow: hidden; }
+.fac + .fac { border-left: 1px solid var(--line); }
+.fac .tag { font-family: var(--mono); font-size: 11px; letter-spacing: .18em; text-transform: uppercase; padding: 3px 8px; border: 1px solid currentColor; display: inline-block; }
+.fac.de .tag { color: var(--de); } .fac.su .tag { color: var(--su); }
+.fac h3 { font-family: var(--head); font-weight: normal; font-size: 34px; margin: 14px 0 6px; letter-spacing: 1px; }
+.fac p { color: var(--ink2); font-size: 15.5px; max-width: 46ch; }
+.fac .bg { position: absolute; right: -20px; bottom: -40px; font-family: var(--head); font-size: 190px; line-height: 1; opacity: .04; pointer-events: none; }
+.reserves { margin-top: 22px; display: grid; gap: 7px; }
+.res { display: grid; grid-template-columns: 54px 1fr 42px; gap: 12px; align-items: center; font-family: var(--mono); font-size: 12px; color: var(--ink2); }
+.res .bar { height: 6px; background: #2b2b1f; position: relative; }
+.res .bar i { position: absolute; inset: 0 auto 0 0; background: currentColor; }
+.fac.de .res .bar i { background: var(--de); } .fac.su .res .bar i { background: var(--su); }
+.res .v { text-align: right; color: var(--ink); }
+.vehicles { margin-top: 20px; font-family: var(--mono); font-size: 11.5px; color: var(--mute); line-height: 1.8; letter-spacing: .04em; }
+.soon { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.soon .chip { font-family: var(--mono); font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink2); border: 1px dashed var(--line2); padding: 5px 10px; }
+
+/* development log */
+.log { margin-top: 44px; border: 1px solid var(--line); }
+.entry { display: grid; grid-template-columns: 130px 1fr auto; gap: 24px; align-items: baseline; padding: 18px 22px; border-bottom: 1px solid var(--line); }
+.entry:last-child { border-bottom: 0; }
+.entry h4 { font-weight: 500; font-size: 18px; letter-spacing: .02em; }
+.entry p { color: var(--ink2); font-size: 15px; }
+.pill { font-family: var(--mono); font-size: 10.5px; letter-spacing: .16em; text-transform: uppercase; padding: 3px 9px; border: 1px solid currentColor; white-space: nowrap; }
+.pill.live { color: var(--ok); } .pill.proto { color: var(--amber); } .pill.plan { color: var(--mute); }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 16px; }
+
+/* faq */
+.faq { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin-top: 44px; border: 1px solid var(--line); }
+details { border-bottom: 1px solid var(--line); padding: 0 22px; }
+.faq details:nth-child(odd) { border-right: 1px solid var(--line); }
+.faq details:nth-last-child(-n+2) { border-bottom: 0; }
+summary { list-style: none; cursor: pointer; padding: 20px 0; font-size: 18px; font-weight: 500; display: flex; justify-content: space-between; gap: 16px; }
+summary::-webkit-details-marker { display: none; }
+summary::after { content: '+'; font-family: var(--mono); color: var(--amber); font-size: 20px; line-height: 1; }
+details[open] summary::after { content: '–'; }
+details p { color: var(--ink2); padding: 0 0 20px; font-size: 15.5px; max-width: 54ch; }
+kbd { font-family: var(--mono); font-size: 12px; border: 1px solid var(--line2); padding: 1px 6px; color: var(--ink); }
+
+/* final call */
+.final { text-align: center; background: radial-gradient(ellipse at center, #2a2716 0%, var(--bg) 70%); }
+.final h2 { font-size: clamp(40px, 6vw, 72px); }
+.final p { color: var(--ink2); margin: 14px auto 30px; max-width: 48ch; }
+
+footer { padding: 48px 0 40px; }
+footer .wrap { display: grid; grid-template-columns: 1.4fr repeat(2, 1fr); gap: 32px; }
+footer h5 { font-family: var(--mono); font-weight: 500; font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--mute); margin-bottom: 12px; }
+footer ul { list-style: none; }
+footer li a { text-decoration: none; color: var(--ink2); font-size: 15px; }
+footer li a:hover { color: var(--ink); }
+footer .fine { color: var(--mute); font-size: 14px; margin-top: 10px; max-width: 40ch; }
+
+/* reveal on scroll */
+.rv { opacity: 0; transform: translateY(14px); transition: opacity .6s ease, transform .6s ease; }
+.rv.in { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  .rv { opacity: 1; transform: none; transition: none; }
+  .scan, .advance, .pulse, .status .live::before { animation: none !important; }
+  html { scroll-behavior: auto; }
+}
+
+@media (max-width: 980px) {
+  .hero .wrap { grid-template-columns: 1fr; padding-top: 48px; }
+  .pillars { grid-template-columns: 1fr 1fr; }
+  .pillar:nth-child(2) { border-right: 0; }
+  .pillar:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+  .schem { grid-template-columns: 1fr; }
+  .statement .row { grid-template-columns: 1fr; }
+}
+@media (max-width: 720px) {
+  body { font-size: 16px; }
+  section { padding: 68px 0; }
+  nav.top ul { display: none; position: absolute; top: 60px; left: 0; right: 0; flex-direction: column; gap: 0; background: var(--bg); border-bottom: 1px solid var(--line); }
+  nav.top ul.open { display: flex; }
+  nav.top ul li a { display: block; padding: 14px 16px; border-top: 1px solid var(--line); }
+  .menu-btn { display: block; }
+  nav.top .play-nav { display: none; }
+  .pillars, .factions, .faq { grid-template-columns: 1fr; }
+  .pillar { border-right: 0 !important; border-bottom: 1px solid var(--line); }
+  .pillar:last-child { border-bottom: 0; }
+  .fac + .fac { border-left: 0; border-top: 1px solid var(--line); }
+  .faq details { border-right: 0 !important; border-bottom: 1px solid var(--line) !important; }
+  .faq details:last-child { border-bottom: 0 !important; }
+  .entry { grid-template-columns: 1fr; gap: 6px; }
+  .status { grid-template-columns: 1fr; width: 100%; }
+  .status div { border-right: 0; border-bottom: 1px solid var(--line); }
+  .status div:last-child { border-bottom: 0; }
+  footer .wrap { grid-template-columns: 1fr; }
+  .fac { padding: 26px 20px; }
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+
+<nav class="top" aria-label="Main">
+  <div class="wrap">
+    <a class="logo" href="#">ZITADELLE<small>KURSK · 1943</small></a>
+    <button class="menu-btn" aria-expanded="false" aria-controls="navlinks">Menu</button>
+    <ul id="navlinks">
+      <li><a href="#operation">Operation</a></li>
+      <li><a href="#combat">Combat</a></li>
+      <li><a href="#armour">Armour</a></li>
+      <li><a href="#factions">Factions</a></li>
+      <li><a href="#development">Development</a></li>
+      <li><a href="#faq">FAQ</a></li>
+    </ul>
+    <a class="btn sm play-nav" href="/play">Play</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <div>
+      <div class="hud-line mono">
+        <span>Unternehmen Zitadelle</span>
+        <span>05·07·1943 &nbsp;04:30</span>
+        <span>Southern face</span>
+      </div>
+      <h1>ZITADELLE</h1>
+      <p class="tagline">Two lines of advance. One village at the end of both.</p>
+      <p class="lede">A top-down multiplayer tank battle set on the southern face of the Kursk salient. Germany attacks village by village toward Prokhorovka, the Soviet Union holds the line, and every tank either side sends in comes out of a reserve pool that won't refill.</p>
+      <div class="ctas">
+        <a class="btn" href="/play">Deploy now &rarr;</a>
+        <a class="btn ghost" href="#operation">Read the briefing</a>
+      </div>
+      <div class="status">
+        <div><span class="mono">Status</span><b class="live">Playable · in development</b></div>
+        <div><span class="mono">Platform</span><b>Desktop browser</b></div>
+        <div><span class="mono">Price</span><b>Free</b></div>
+      </div>
+    </div>
+
+    <!-- Battle map: the real objective layout from shared/shared.js, scaled 1:10 -->
+    <div class="mapframe" role="img" aria-label="Map of the front: attack line A in the north-west and line B in the south-east, both converging on Prokhorovka.">
+      <svg viewBox="0 0 800 800">
+        <defs>
+          <pattern id="grid" width="100" height="100" patternUnits="userSpaceOnUse">
+            <path d="M100 0H0V100" fill="none" stroke="#2e2d1f" stroke-width="1"/>
+          </pattern>
+          <pattern id="gridf" width="25" height="25" patternUnits="userSpaceOnUse">
+            <path d="M25 0H0V25" fill="none" stroke="#232318" stroke-width="1"/>
+          </pattern>
+          <marker id="arr" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0L10 5L0 10z" fill="#9aa3a8"/>
+          </marker>
+        </defs>
+        <rect width="800" height="800" fill="url(#gridf)"/>
+        <rect width="800" height="800" fill="url(#grid)"/>
+        <!-- terrain hints -->
+        <path d="M0 610 C 120 560, 200 640, 300 600 S 420 520, 470 470" fill="none" stroke="#2f3a2a" stroke-width="10" opacity=".7"/>
+        <path d="M520 0 C 540 80, 600 110, 700 120 S 790 90, 800 140" fill="none" stroke="#2d3a3c" stroke-width="7" opacity=".8"/>
+        <!-- line A -->
+        <polyline class="advance" points="90,440 181,352 278,277 386,223 493,192 630,170" fill="none" stroke="#9aa3a8" stroke-width="3" marker-end="url(#arr)"/>
+        <!-- line B -->
+        <polyline class="advance" points="360,710 448,619 523,522 577,414 608,307 630,170" fill="none" stroke="#9aa3a8" stroke-width="3" marker-end="url(#arr)"/>
+        <!-- objectives -->
+        <g fill="none" stroke="#5d5639" stroke-width="1.5" stroke-dasharray="3 4">
+          <circle cx="90" cy="440" r="40"/><circle cx="181" cy="352" r="40"/><circle cx="278" cy="277" r="40"/><circle cx="386" cy="223" r="40"/><circle cx="493" cy="192" r="40"/>
+          <circle cx="360" cy="710" r="40"/><circle cx="448" cy="619" r="40"/><circle cx="523" cy="522" r="40"/><circle cx="577" cy="414" r="40"/><circle cx="608" cy="307" r="40"/>
+        </g>
+        <g fill="#9aa3a8"><circle cx="90" cy="440" r="7"/><circle cx="360" cy="710" r="7"/></g>
+        <g fill="#1a1b13" stroke="#b9ae86" stroke-width="2">
+          <circle cx="181" cy="352" r="6"/><circle cx="278" cy="277" r="6"/><circle cx="386" cy="223" r="6"/><circle cx="493" cy="192" r="6"/>
+          <circle cx="448" cy="619" r="6"/><circle cx="523" cy="522" r="6"/><circle cx="577" cy="414" r="6"/><circle cx="608" cy="307" r="6"/>
+        </g>
+        <!-- O1 -->
+        <circle class="pulse" cx="630" cy="170" r="60" fill="none" stroke="#c8483a" stroke-width="2"/>
+        <circle cx="630" cy="170" r="60" fill="rgba(200,72,58,.08)" stroke="#c8483a" stroke-width="2"/>
+        <circle cx="630" cy="170" r="9" fill="#c8483a"/>
+        <!-- labels -->
+        <text class="pt-id" x="62" y="497">A5</text><text class="pt-label" x="90" y="497">BYKOVKA</text>
+        <text class="pt-id" x="130" y="402">A4</text><text class="pt-label" x="158" y="402">YAKOVLEVO</text>
+        <text class="pt-id" x="226" y="327">A3</text><text class="pt-label" x="254" y="327">POKROVKA</text>
+        <text class="pt-id" x="335" y="174">A2</text><text class="pt-label" x="363" y="174">TETEREVINO</text>
+        <text class="pt-id" x="440" y="145">A1</text><text class="pt-label" x="468" y="145">OKTYABRSKY</text>
+        <text class="pt-id" x="300" y="765">B5</text><text class="pt-label" x="328" y="765">BELENIKHINO</text>
+        <text class="pt-id" x="494" y="640">B4</text><text class="pt-label" x="522" y="640">LESKI</text>
+        <text class="pt-id" x="568" y="540">B3</text><text class="pt-label" x="596" y="540">SHAKHOVO</text>
+        <text class="pt-id" x="623" y="432">B2</text><text class="pt-label" x="651" y="432">VINOGRADOVKA</text>
+        <text class="pt-id" x="653" y="320">B1</text><text class="pt-label" x="681" y="320">STOROZHEVOYE</text>
+        <text class="pt-id" x="610" y="258" style="fill:#e08a7c">O1</text><text class="pt-label" x="638" y="258" style="fill:#e08a7c">PROKHOROVKA</text>
+      </svg>
+      <div class="scan"></div>
+      <span class="corner tl">Sheet M-37 · 8000×8000</span>
+      <span class="corner tr">Objective <span class="amber">O1</span><br>Bearing 042°</span>
+      <span class="corner bl">Attacker &rarr; <span style="color:var(--de)">DE</span></span>
+      <span class="corner br">Defender <span style="color:var(--su)">SU</span></span>
+    </div>
+  </div>
+</header>
+
+<main id="content">
+
+<section class="statement" id="operation">
+  <div class="wrap row">
+    <div>
+      <div class="sec-head rv"><span class="no">00 / The operation</span></div>
+      <p class="big rv">Each side has to split its forces between two lines, and <em>an objective can only be taken from the one next to it.</em> Push too hard on one line and the other one falls.</p>
+    </div>
+    <div class="facts rv">
+      <div><b>11</b><span class="mono">Objectives</span></div>
+      <div><b>2</b><span class="mono">Attack lines</span></div>
+      <div><b>31</b><span class="mono">Playable vehicles</span></div>
+      <div><b>0</b><span class="mono">Accounts needed</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="combat">
+  <div class="wrap">
+    <div class="sec-head rv"><span class="no">01 / Combat</span></div>
+    <h2 class="rv">How a battle is fought</h2>
+    <p class="intro rv">There are no levels or upgrades inside a battle. Every vehicle has fixed historical stats, and you win by what you take and what you can afford to lose.</p>
+    <div class="pillars">
+      <article class="pillar rv">
+        <div class="n">01</div>
+        <h3>Take the line</h3>
+        <p>The attackers fight forward from A5 and B5, one village at a time. If the defenders retake a starting village, that line is defeated and stays locked for the rest of the battle.</p>
+        <ul><li>Hold more strength in the zone to take it</li><li>Prokhorovka is larger and takes twice as long</li><li>Light tanks count double in a zone</li></ul>
+      </article>
+      <article class="pillar rv">
+        <div class="n">02</div>
+        <h3>Spend reserves</h3>
+        <p>Each side has a fixed pool of light, medium and heavy tanks and tank destroyers. A side that has used up its reserves and has nothing left on the field loses.</p>
+        <ul><li>5 vehicle categories</li><li>Remaining reserves shown to both sides</li><li>A new battle starts 30 s after one ends</li></ul>
+      </article>
+      <article class="pillar rv">
+        <div class="n">03</div>
+        <h3>Carry the load</h3>
+        <p>Every deployment adds to your personal logistics load, which drains at one second per second. A Tiger II takes most of your ten minutes. A light tank costs nothing.</p>
+        <ul><li>10:00 logistics limit</li><li>Bots follow the same rule</li><li>Your load clears when a new battle starts</li></ul>
+      </article>
+      <article class="pillar rv">
+        <div class="n">04</div>
+        <h3>Break them apart</h3>
+        <p>Armour is modelled by facing and thickness. When a shell gets through, it damages whatever is behind the plate: tracks, engine, fuel or the ammo rack.</p>
+        <ul><li>Hull-relative tank controls</li><li>Neutral, clutch and wheeled steering</li><li>Houses and the church stop shells</li></ul>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section id="armour">
+  <div class="wrap">
+    <div class="sec-head rv"><span class="no">02 / Armour</span></div>
+    <h2 class="rv">What's behind the plate</h2>
+    <p class="intro rv">Every vehicle has four hidden components. Where a shell goes in decides what it hits, so you aim for a component, not just for the tank.</p>
+    <div class="schem">
+      <figure class="blueprint rv">
+        <svg viewBox="0 0 640 400" aria-label="Top-down schematic of a tank showing the tracks, engine, fuel tanks and ammo rack">
+          <g stroke="#b9ae86" fill="none" stroke-width="1.6">
+            <!-- tracks -->
+            <rect x="110" y="96" width="330" height="34" fill="rgba(143,179,90,.10)" stroke="#8fb35a"/>
+            <rect x="110" y="270" width="330" height="34" fill="rgba(143,179,90,.10)" stroke="#8fb35a"/>
+            <g stroke="#8fb35a" opacity=".5" stroke-width="1">
+              <path d="M126 96v34M146 96v34M166 96v34M186 96v34M206 96v34M226 96v34M246 96v34M266 96v34M286 96v34M306 96v34M326 96v34M346 96v34M366 96v34M386 96v34M406 96v34M426 96v34"/>
+              <path d="M126 270v34M146 270v34M166 270v34M186 270v34M206 270v34M226 270v34M246 270v34M266 270v34M286 270v34M306 270v34M326 270v34M346 270v34M366 270v34M386 270v34M406 270v34M426 270v34"/>
+            </g>
+            <!-- hull -->
+            <path d="M118 130 H432 L452 150 V250 L432 270 H118 Z" fill="#1d1e16"/>
+            <!-- engine deck -->
+            <rect x="126" y="166" width="78" height="68" fill="rgba(185,174,134,.12)" stroke="#e7dcb1"/>
+            <!-- fuel tanks -->
+            <rect x="126" y="138" width="78" height="22" fill="rgba(224,164,58,.14)" stroke="#e0a43a"/>
+            <rect x="126" y="240" width="78" height="22" fill="rgba(224,164,58,.14)" stroke="#e0a43a"/>
+            <!-- ammo rack -->
+            <rect x="232" y="138" width="120" height="124" fill="rgba(200,72,58,.12)" stroke="#c8483a" stroke-dasharray="5 4"/>
+            <!-- turret -->
+            <circle cx="300" cy="200" r="52" fill="#23241a"/>
+            <rect x="350" y="193" width="200" height="14" fill="#23241a"/>
+            <rect x="540" y="189" width="16" height="22" fill="#23241a"/>
+          </g>
+          <!-- facing marks -->
+          <g class="callout-sub">
+            <text x="590" y="182" text-anchor="middle">FRONT</text>
+          </g>
+          <!-- leaders -->
+          <g stroke="#857c5c" stroke-width="1" fill="none">
+            <path d="M200 96 L230 44 H300"/>
+            <path d="M150 200 H100"/>
+            <path d="M165 262 L120 340 H40"/>
+            <path d="M330 262 L380 340 H470"/>
+          </g>
+          <g fill="#857c5c"><circle cx="200" cy="96" r="3"/><circle cx="150" cy="200" r="3"/><circle cx="165" cy="262" r="3"/><circle cx="330" cy="262" r="3"/></g>
+          <text class="callout" x="306" y="48">TRACKS</text>
+          <text class="callout-sub" x="306" y="64">any side hit</text>
+          <text class="callout" x="24" y="194">ENGINE</text>
+          <text class="callout-sub" x="24" y="216">rear</text>
+          <text class="callout" x="40" y="358">FUEL</text>
+          <text class="callout-sub" x="40" y="374">rear corners</text>
+          <text class="callout" x="476" y="344">AMMO RACK</text>
+          <text class="callout-sub" x="476" y="360">front &amp; mid-side</text>
+        </svg>
+        <figcaption class="cap"><span class="mono">Schematic · not to scale</span><span class="mono">Penetration → component</span></figcaption>
+      </figure>
+      <div class="comp-list rv">
+        <div class="comp" style="color:#8fb35a"><span class="sw"></span><div><b>Tracks</b><p>Outside the armour. A side hit damages them even if it doesn't penetrate. Without tracks the vehicle can't drive or turn its hull.</p></div><span class="t">10 s repair</span></div>
+        <div class="comp" style="color:#e7dcb1"><span class="sw"></span><div><b>Engine</b><p>Top speed drops to 30% and the hull turns at half rate. It pours white smoke that everyone can see until it's repaired.</p></div><span class="t">20 s repair</span></div>
+        <div class="comp" style="color:#e0a43a"><span class="sw"></span><div><b>Fuel tank</b><p>Destroying one costs the vehicle an extra 12% of its health at once, and that side burns for four seconds.</p></div><span class="t">15 s repair</span></div>
+        <div class="comp" style="color:#c8483a"><span class="sw"></span><div><b>Ammo rack</b><p>Destroying it costs 15% of the vehicle's health, and the ammunition cooks off in sparks and bangs.</p></div><span class="t">20 s repair</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="factions">
+  <div class="wrap">
+    <div class="sec-head rv"><span class="no">03 / Factions</span></div>
+    <h2 class="rv">Two armies, fixed reserves</h2>
+    <p class="intro rv">You can only switch sides in the 30 seconds between battles. Only your own side's names are shown over vehicles, and enemy crews stay anonymous.</p>
+    <div class="factions">
+      <article class="fac de rv">
+        <span class="tag">Attacker · Axis</span>
+        <h3>Germany</h3>
+        <p>Heavier guns and thicker fronts, but fewer of them. The attacker has to capture every village on a line to reach Prokhorovka, and has one rear assembly area behind each line.</p>
+        <div class="reserves">
+          <div class="res"><span>LT</span><span class="bar"><i style="width:0%"></i></span><span class="v">0</span></div>
+          <div class="res"><span>MT</span><span class="bar"><i style="width:100%"></i></span><span class="v">200</span></div>
+          <div class="res"><span>HT</span><span class="bar"><i style="width:30%"></i></span><span class="v">60</span></div>
+          <div class="res"><span>TD</span><span class="bar"><i style="width:50%"></i></span><span class="v">100</span></div>
+          <div class="res"><span>HTD</span><span class="bar"><i style="width:20%"></i></span><span class="v">40</span></div>
+        </div>
+        <p class="vehicles">Panzer IV · Panther · Tiger I · Tiger II · StuG III · Jagdpanther · Ferdinand · Jagdtiger · …</p>
+        <span class="bg" aria-hidden="true">DE</span>
+      </article>
+      <article class="fac su rv">
+        <span class="tag">Defender · Allies</span>
+        <h3>Soviet Union</h3>
+        <p>Light tanks to scout and contest, and a deep pool of T-34s. The defender wins by taking back both starting villages, which defeats both attack lines.</p>
+        <div class="reserves">
+          <div class="res"><span>LT</span><span class="bar"><i style="width:30%"></i></span><span class="v">60</span></div>
+          <div class="res"><span>MT</span><span class="bar"><i style="width:100%"></i></span><span class="v">200</span></div>
+          <div class="res"><span>HT</span><span class="bar"><i style="width:25%"></i></span><span class="v">50</span></div>
+          <div class="res"><span>TD</span><span class="bar"><i style="width:35%"></i></span><span class="v">70</span></div>
+          <div class="res"><span>HTD</span><span class="bar"><i style="width:15%"></i></span><span class="v">30</span></div>
+        </div>
+        <p class="vehicles">T-70 · T-34-76 · T-34-85 · KV-1S · KV-85 · IS-2 · SU-85 · SU-152 · ISU-152 · …</p>
+        <span class="bg" aria-hidden="true">SU</span>
+      </article>
+    </div>
+    <div class="soon rv">
+      <span class="mono">In preparation, not yet playable</span>
+      <span class="chip">Italy</span><span class="chip">United Kingdom</span><span class="chip">United States</span>
+    </div>
+  </div>
+</section>
+
+<section id="development">
+  <div class="wrap">
+    <div class="sec-head rv"><span class="no">04 / Development</span></div>
+    <h2 class="rv">Field reports</h2>
+    <p class="intro rv">Zitadelle is a work in progress. Each item is labelled with how far along it is.</p>
+    <div class="log rv">
+      <div class="entry"><span class="mono">Nations</span><div><h4>Italian, British and American vehicles</h4><p>The vehicles are defined with full stats but can't be picked yet.</p></div><span class="pill plan">Planned</span></div>
+      <div class="entry"><span class="mono">Meta</span><div><h4>Progression and tech trees</h4><p>Account levels, XP, and a tech tree of vehicles to unlock for each nation.</p></div><span class="pill proto">Prototype</span></div>
+      <div class="entry"><span class="mono">Combat</span><div><h4>Vehicle components</h4><p>Tracks, engine, fuel tanks and ammo racks, each with its own damage and repair timer.</p></div><span class="pill live">Live</span></div>
+      <div class="entry"><span class="mono">Front</span><div><h4>A larger Prokhorovka</h4><p>O1 has a half-again larger zone and takes twice as long to capture.</p></div><span class="pill live">Live</span></div>
+      <div class="entry"><span class="mono">Armoury</span><div><h4>MG, autocannon and rocket vehicles</h4><p>Vehicles like the Wirbelwind and the Katyusha are built but switched off until they're balanced.</p></div><span class="pill plan">Planned</span></div>
+    </div>
+    <div class="legend"><span class="pill live">Live</span><span class="pill proto">Prototype</span><span class="pill plan">Planned</span></div>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="wrap">
+    <div class="sec-head rv"><span class="no">05 / FAQ</span></div>
+    <h2 class="rv">Questions</h2>
+    <div class="faq rv">
+      <details><summary>Can I play Zitadelle now?</summary><p>Yes. It runs in your browser. Enter a commander name, pick a side and deploy. You don't need an account or a download.</p></details>
+      <details><summary>Can I play on my own?</summary><p>Yes. Bots fill out both sides and follow the same reserve and logistics rules as players, so a battle is never empty.</p></details>
+      <details><summary>What do I need?</summary><p>A desktop browser with a keyboard and mouse. <kbd>W</kbd><kbd>S</kbd> drive, <kbd>A</kbd><kbd>D</kbd> steer the hull, the mouse aims the turret, and right-click fires your machine guns.</p></details>
+      <details><summary>Is it historically accurate?</summary><p>The villages, lines and vehicles come from the southern face of Kursk in July 1943, and armour, guns and handling follow the real vehicles. Some later vehicles are included for balance and variety.</p></details>
+    </div>
+  </div>
+</section>
+
+<section class="final">
+  <div class="wrap">
+    <div class="mono rv">The line is waiting</div>
+    <h2 class="rv">Prokhorovka is still held.</h2>
+    <p class="rv">A battle is running right now. Join either side and you'll be in it within seconds.</p>
+    <a class="btn rv" href="/play">Deploy now &rarr;</a>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <a class="logo" href="#">ZITADELLE</a>
+      <p class="fine">In development. A free browser game, not affiliated with any publisher.</p>
+    </div>
+    <div>
+      <h5>Explore</h5>
+      <ul><li><a href="#operation">Operation</a></li><li><a href="#combat">Combat</a></li><li><a href="#armour">Armour</a></li><li><a href="#factions">Factions</a></li></ul>
+    </div>
+    <div>
+      <h5>Play</h5>
+      <ul><li><a href="/play">Deploy</a></li><li><a href="#development">Development</a></li><li><a href="#faq">FAQ</a></li></ul>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var btn = document.querySelector('.menu-btn'), list = document.getElementById('navlinks');
+  btn.addEventListener('click', function () {
+    var open = list.classList.toggle('open');
+    btn.setAttribute('aria-expanded', open);
+  });
+  list.addEventListener('click', function (e) { if (e.target.tagName === 'A') { list.classList.remove('open'); btn.setAttribute('aria-expanded', false); } });
+
+  var els = document.querySelectorAll('.rv');
+  if (!('IntersectionObserver' in window)) { els.forEach(function (el) { el.classList.add('in'); }); return; }
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (en) { if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); } });
+  }, { rootMargin: '0px 0px -8% 0px' });
+  els.forEach(function (el) { io.observe(el); });
+})();
+</script>
+</body>
+</html>

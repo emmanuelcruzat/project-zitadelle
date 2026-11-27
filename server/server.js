@@ -14,7 +14,8 @@ const ROOT = path.join(__dirname, '..');
 
 // Only these files are served — no directory traversal possible.
 const FILES = {
-  '/':           ['public/index.html', 'text/html; charset=utf-8'],
+  '/':           ['public/landing.html', 'text/html; charset=utf-8'],
+  '/play':       ['public/index.html', 'text/html; charset=utf-8'],
   '/index.html': ['public/index.html', 'text/html; charset=utf-8'],
   '/style.css':  ['public/style.css', 'text/css; charset=utf-8'],
   '/client.js':  ['public/client.js', 'application/javascript; charset=utf-8'],
