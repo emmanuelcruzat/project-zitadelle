@@ -249,6 +249,58 @@ const Sound = (() => {
   };
   api.tick = () => { budget = 0; };
 
+  // ---- coalition hum (nation info screen): a low, slowly breathing drone, different for each side.
+  // Axis: dark and ominous, detuned sawtooths on a low E with its fifth and a faint minor third through a
+  // resonant, slowly sweeping low-pass, over a sub rumble. Allies: a plain, steady, friendly chord: C major
+  // (C, E, G and the octave over a soft low C) on clean sine waves, no detune or filter sweep, only a very slow,
+  // gentle swell. ----
+  let hum = null;
+  api.hum = kind => {
+    if (!ac) return;
+    if (ac.state === 'suspended') ac.resume();
+    if (hum && hum.kind === kind) return;
+    api.humStop();
+    const axis = kind === 'Axis', t = ac.currentTime, srcs = [];
+    const out = ac.createGain();
+    out.gain.setValueAtTime(0, t); out.gain.linearRampToValueAtTime(axis ? 0.08 : 0.06, t + 1.4);
+    out.connect(master);
+    const send = ac.createGain(); send.gain.value = 0.45; out.connect(send); send.connect(verbIn);
+    // breathing: a slow swell on the level
+    const breath = ac.createGain(); breath.gain.value = 0.8; breath.connect(out);
+    const bl = ac.createOscillator(), blg = ac.createGain();
+    bl.frequency.value = axis ? 0.12 : 0.08; blg.gain.value = axis ? 0.2 : 0.08; bl.connect(blg); blg.connect(breath.gain); srcs.push(bl);
+    // the filter slowly opens and closes
+    const lp = ac.createBiquadFilter(); lp.type = 'lowpass';
+    lp.frequency.value = axis ? 170 : 2000; lp.Q.value = axis ? 7 : 0.5; lp.connect(breath);
+    if (axis) {   // the Axis filter slowly opens and closes; the Allies one stays put
+      const fl = ac.createOscillator(), flg = ac.createGain();
+      fl.frequency.value = 0.07; flg.gain.value = 75; fl.connect(flg); flg.connect(lp.frequency); srcs.push(fl);
+    }
+    const notes = axis
+      ? [[41.2, 'sawtooth', 0.5], [41.55, 'sawtooth', 0.42], [61.74, 'sawtooth', 0.26], [49.0, 'triangle', 0.2]]
+      : [[65.41, 'sine', 0.22], [130.81, 'sine', 0.3], [164.81, 'sine', 0.24], [196.0, 'sine', 0.22], [261.63, 'sine', 0.14]];
+    for (const [f, type, v] of notes) {
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.type = type; o.frequency.value = f; g.gain.value = v;
+      o.connect(g); g.connect(lp); srcs.push(o);
+    }
+    if (axis && noise) {   // a sub rumble under the Axis drone
+      const n = ac.createBufferSource(), nf = ac.createBiquadFilter(), ng = ac.createGain();
+      n.buffer = noise; n.loop = true; nf.type = 'lowpass'; nf.frequency.value = 85; ng.gain.value = 0.5;
+      n.connect(nf); nf.connect(ng); ng.connect(breath); srcs.push(n);
+    }
+    for (const n of srcs) n.start(t);
+    hum = { kind, out, srcs };
+  };
+  api.humStop = () => {
+    if (!hum || !ac) { hum = null; return; }
+    const h = hum, t = ac.currentTime;
+    hum = null;
+    h.out.gain.cancelScheduledValues(t); h.out.gain.setValueAtTime(h.out.gain.value, t);
+    h.out.gain.linearRampToValueAtTime(0, t + 0.9);
+    for (const n of h.srcs) n.stop(t + 1);
+  };
+
   // ---- voice building blocks ----
   function voice(vol, dn, delay) {
     const t = ac.currentTime + 0.005 + delay;
@@ -560,6 +612,7 @@ function onMessage(m) {
   else offset += (sample - offset) * (sample > offset ? 0.2 : 0.02);
 
   you = m.you || null;
+  progTrackScore(you);
   // promotion: rank went up on the same side (it drops back when a new battle resets scores — no popup then)
   if (you && promo.lastRank != null && you.team === promo.lastTeam && you.rank > promo.lastRank) promoted(you.team, you.rank);
   promo.lastRank = you ? you.rank : null; promo.lastTeam = you ? you.team : null;
@@ -2928,8 +2981,10 @@ const infoOpen = () => !ui.info.classList.contains('hidden');
 // opens on the two coalitions; clicking one shows its nations (your own side's coalition opens on your nation)
 const COALITION_ORDER = { Axis: ['de', 'it'], Allies: ['su', 'us', 'gb'] };
 const heroOpen = () => !document.getElementById('infohero').classList.contains('hidden');
-function openInfo() { ui.info.classList.remove('hidden'); showHero(); }
-function closeInfo() { ui.info.classList.add('hidden'); ui.infotip.classList.add('hidden'); }
+// (opened by a click, so audio can start here: browsers only allow it after a user gesture, and the coalition
+// hums play on hover)
+function openInfo() { Sound.init(); ui.info.classList.remove('hidden'); showHero(); }
+function closeInfo() { Sound.humStop(); ui.info.classList.add('hidden'); ui.infotip.classList.add('hidden'); }
 function showHero() {
   const hero = document.getElementById('infohero');
   hero.classList.remove('hidden');
@@ -2938,18 +2993,60 @@ function showHero() {
   // replay the entrance animation every time
   hero.classList.remove('enter'); void hero.offsetWidth; hero.classList.add('enter');
 }
+// Clicking a coalition: the picked half lights up and zooms toward you while the other slides off its side,
+// then the coalition's page fades and scales in (instant when the system asks for reduced motion).
+const COAL_LEAVE_MS = 380;
+let coalLeaving = false;
 function openCoalition(coal) {
+  const hero = document.getElementById('infohero');
+  if (coalLeaving) return;
+  Sound.humStop();
+  if (hero.classList.contains('hidden') || matchMedia('(prefers-reduced-motion: reduce)').matches) { showCoalition(coal); return; }
+  coalLeaving = true;
+  hero.querySelectorAll('.herohalf').forEach(b => b.classList.toggle('picked', b.dataset.coal === coal));
+  hero.classList.remove('enter'); hero.classList.add('leaving');
+  setTimeout(() => {
+    coalLeaving = false;
+    hero.classList.remove('leaving');
+    hero.querySelectorAll('.herohalf').forEach(b => b.classList.remove('picked'));
+    showCoalition(coal);
+  }, COAL_LEAVE_MS);
+}
+// Switching nation tabs: the current content slides out the way you're moving and the new nation slides in
+// from the other side (dir +1 = to a tab further right, -1 = back). Instant with reduced motion.
+function swapContent(el, dir, render) {
+  if (!dir || matchMedia('(prefers-reduced-motion: reduce)').matches) { render(); return; }
+  clearTimeout(el._swapT);
+  el.style.setProperty('--dir', dir);
+  el.classList.remove('swapin'); el.classList.add('swapout');
+  el._swapT = setTimeout(() => {
+    el.classList.remove('swapout');
+    render(); el.scrollTop = 0;
+    void el.offsetWidth; el.classList.add('swapin');
+  }, 160);
+}
+let infoTeam = null;
+function showCoalition(coal) {
   document.getElementById('infohero').classList.add('hidden');
-  document.getElementById('infonation').classList.remove('hidden');
+  const page = document.getElementById('infonation');
+  page.classList.remove('hidden');
+  page.classList.remove('enter'); void page.offsetWidth; page.classList.add('enter');
   const cv = document.getElementById('coalbadge');
   drawCoalitionBadge(cv.getContext('2d'), coal, cv.width, cv.height);
   document.getElementById('coalname').textContent = coal;
   const tabs = document.getElementById('nationtabs'), list = COALITION_ORDER[coal];
   tabs.innerHTML = list.map(t => `<button class="${t}" data-team="${t}">${escapeHtml(TEAMS[t].name)}</button>`).join('');
-  tabs.querySelectorAll('button').forEach(b => b.addEventListener('click', () => showInfo(b.dataset.team)));
+  tabs.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+    const to = b.dataset.team;
+    if (to === infoTeam) return;
+    const dir = Math.sign(list.indexOf(to) - list.indexOf(infoTeam)) || 1;
+    tabs.querySelectorAll('button').forEach(x => x.classList.toggle('sel', x.dataset.team === to));   // tab lights at once
+    swapContent(document.getElementById('infobody'), dir, () => showInfo(to));
+  }));
   showInfo(list.includes(playerTeam) ? playerTeam : list[0]);
 }
 function showInfo(team) {
+  infoTeam = team;
   document.querySelectorAll('#nationtabs button').forEach(b => b.classList.toggle('sel', b.dataset.team === team));
   const body = document.getElementById('infobody');
   const F = FACTION_INFO[team];
@@ -3350,6 +3447,112 @@ factionBtns.forEach(b => {
   drawFactionMark(c, b.dataset.team, Math.min(cv.width, cv.height) * 0.36);
   c.restore();
 });
+// =====================================================================
+// Progression (prototype): account level and a tech tree of vehicles to unlock, per nation. Every point of
+// battle score you earn becomes account XP; total XP sets your level, and unspent XP buys the next vehicle
+// in a line. Saved in this browser only, and it doesn't lock anything in battle yet.
+// =====================================================================
+// one line per reserve class: [vehicle id, XP to unlock]; 0 = a free starter. Each needs the one before it.
+const TECH_TREE = {
+  de: {
+    lt: [['pz2c', 0], ['pz38t', 800], ['luchs', 1500]],
+    mt: [['pz3', 0], ['pz4', 1500], ['panther', 4000]],
+    td: [['hetzer', 0], ['stug', 1500], ['jgpz4', 3000]],
+    ht: [['tiger', 3500], ['tiger2', 8000]],
+    htd: [['brummbaer', 3000], ['jagdpanther', 5000], ['ferdinand', 7000], ['jagdtiger', 10000]],
+  },
+  su: {
+    lt: [['t26', 0], ['bt7', 800], ['t70', 1500]],
+    mt: [['t28', 0], ['t34', 0], ['t3485', 4000]],
+    td: [['su76', 0], ['su85', 2500]],
+    ht: [['kv1s', 2500], ['kv85', 5000], ['is2', 8000]],
+    htd: [['su122', 3000], ['su100', 5000], ['su152', 7000], ['isu152', 10000]],
+  },
+};
+const PROG_KEY = 'zitadelle.progress';
+// XP needed to go from level n to n + 1
+const levelCost = n => 500 + 250 * (n - 1);
+function levelOf(xp) {
+  let n = 1, need = levelCost(1);
+  while (xp >= need) { xp -= need; n++; need = levelCost(n); }
+  return { level: n, into: xp, need };
+}
+let prog = { xp: 0, spent: 0, owned: [] };
+try { Object.assign(prog, JSON.parse(localStorage.getItem(PROG_KEY) || '{}')); } catch (e) { /* storage unavailable */ }
+const saveProg = () => { try { localStorage.setItem(PROG_KEY, JSON.stringify({ xp: prog.xp, spent: prog.spent, owned: prog.owned })); } catch (e) { /* ignore */ } };
+const progFree = () => prog.xp - prog.spent;
+const progOwns = (id, cost) => cost === 0 || prog.owned.includes(id);
+let progNation = 'de', progLastScore = null, progLastTeam = null;
+// battle score -> account XP (called with each snapshot's "you"; score drops back to 0 each battle)
+function progTrackScore(y) {
+  if (!y || typeof y.score !== 'number') return;
+  if (progLastScore != null && y.team === progLastTeam && y.score > progLastScore) {
+    prog.xp += y.score - progLastScore; saveProg();
+    if (progOpen()) renderProgress();
+  }
+  progLastScore = y.score; progLastTeam = y.team;
+}
+const progEl = document.getElementById('progress');
+const progOpen = () => !progEl.classList.contains('hidden');
+function renderProgress() {
+  const L = levelOf(prog.xp);
+  document.getElementById('plevel').textContent = L.level;
+  document.getElementById('pbar').style.width = `${(L.into / L.need) * 100}%`;
+  document.getElementById('pxptext').textContent = `${fmt(L.into)} / ${fmt(L.need)} XP to level ${L.level + 1}  \u00b7  ${fmt(prog.xp)} XP earned in all`;
+  document.getElementById('pfree').textContent = fmt(progFree());
+  progEl.querySelectorAll('.pnat').forEach(b => b.classList.toggle('sel', b.dataset.n === progNation));
+  const tree = TECH_TREE[progNation], box = document.getElementById('ptree');
+  box.innerHTML = '';
+  CATS.forEach(cat => {
+    const line = tree[cat.key];
+    if (!line) return;
+    const row = document.createElement('div');
+    row.className = 'prow';
+    row.innerHTML = `<div class="plbl">${escapeHtml(cat.name)}</div>`;
+    line.forEach(([id, cost], i) => {
+      if (i) row.insertAdjacentHTML('beforeend', '<span class="parrow">\u203a</span>');
+      const prevOwned = i === 0 || progOwns(line[i - 1][0], line[i - 1][1]);
+      const owned = progOwns(id, cost), next = !owned && prevOwned, short = next && progFree() < cost;
+      const node = document.createElement('button');
+      node.className = 'pnode' + (owned ? ' owned' : next ? ' next' + (short ? ' short' : '') : ' locked');
+      node.dataset.id = id;
+      const state = owned ? (cost === 0 ? 'Starter' : 'Owned') : next ? `Unlock \u00b7 ${fmt(cost)} XP` : `Needs ${CLASSES[line[i - 1][0]].name}`;
+      node.innerHTML = `<canvas width="160" height="120"></canvas><span class="pname">${escapeHtml(CLASSES[id].name)}</span><span class="pstate">${escapeHtml(state)}</span>`;
+      node.title = CLASSES[id].desc || '';
+      if (next && !short) node.addEventListener('click', () => {
+        prog.spent += cost; prog.owned.push(id); saveProg();
+        Sound.tone([523, 659, 784], 0.09, 0.06);
+        renderProgress();
+        const n2 = box.querySelector(`.pnode[data-id="${id}"]`); if (n2) n2.classList.add('flash');
+      });
+      row.appendChild(node);
+      drawPreview(node.querySelector('canvas'), id, progNation, 0);
+    });
+    box.appendChild(row);
+  });
+}
+function openProgress() {
+  Sound.init();
+  progNation = playerTeam === 'su' ? 'su' : 'de';
+  progEl.classList.remove('hidden');
+  renderProgress();
+}
+function closeProgress() { progEl.classList.add('hidden'); }
+document.getElementById('progbtn').addEventListener('click', openProgress);
+document.getElementById('pclose').addEventListener('click', closeProgress);
+progEl.querySelectorAll('.pnat').forEach(b => b.addEventListener('click', () => {
+  const to = b.dataset.n, order = ['de', 'su'];
+  if (to === progNation) return;
+  const dir = Math.sign(order.indexOf(to) - order.indexOf(progNation)) || 1;
+  progNation = to;
+  progEl.querySelectorAll('.pnat').forEach(x => x.classList.toggle('sel', x.dataset.n === to));   // tab lights at once
+  swapContent(document.getElementById('ptree'), dir, renderProgress);
+}));
+// prototype tools
+document.getElementById('pgive').addEventListener('click', () => { prog.xp += 1000; saveProg(); renderProgress(); });
+document.getElementById('preset').addEventListener('click', () => { prog = { xp: 0, spent: 0, owned: [] }; saveProg(); renderProgress(); });
+addEventListener('keydown', e => { if (e.key === 'Escape' && progOpen()) { e.stopImmediatePropagation(); closeProgress(); } }, true);
+
 function selectFaction(team) {
   playerTeam = team;
   factionBtns.forEach(b => b.classList.toggle('sel', b.dataset.team === team));
@@ -3369,7 +3572,12 @@ document.getElementById('tohq').addEventListener('click', switchSides);
 document.getElementById('infobtn').addEventListener('click', openInfo);
 document.getElementById('mapinfo').addEventListener('click', openInfo);
 document.getElementById('infoback').addEventListener('click', showHero);
-ui.info.querySelectorAll('.herohalf').forEach(b => b.addEventListener('click', () => openCoalition(b.dataset.coal)));
+ui.info.querySelectorAll('.herohalf').forEach(b => {
+  b.addEventListener('click', () => openCoalition(b.dataset.coal));
+  // hovering a coalition: its low cinematic hum fades in (and out when the mouse leaves)
+  b.addEventListener('mouseenter', () => { Sound.init(); Sound.hum(b.dataset.coal); });
+  b.addEventListener('mouseleave', () => Sound.humStop());
+});
 // member nations' emblems on the hero
 ui.info.querySelectorAll('.heronations [data-n] canvas').forEach(cv => {
   const c = cv.getContext('2d'); c.save(); c.translate(cv.width / 2, cv.height / 2);

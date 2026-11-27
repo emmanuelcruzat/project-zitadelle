@@ -23,7 +23,7 @@
       <button class="faction su" data-team="su"><canvas width="240" height="180"></canvas><span class="fname">Soviet Union</span></button>
     </div>
     <button id="deploy" class="btn">Deploy</button>
-    <div><button id="infobtn" class="btn secondary menuinfo">Nation info</button></div>
+    <div><button id="infobtn" class="btn secondary menuinfo">Nation info</button> <button id="progbtn" class="btn secondary menuinfo">Progression</button></div>
     <div id="status"></div>
   </div>
 </div>
@@ -51,6 +51,28 @@
 <div id="deploypanel" class="deploypanel hidden">
   <div class="dphead"><span id="dpname"></span></div>
   <div id="deathpick" class="picker"></div>
+</div>
+
+<!-- progression (prototype): account level, XP, and each nation's tech tree of vehicles to unlock -->
+<div id="progress" class="overlay hidden">
+  <div class="panel progpanel">
+    <div class="proghead">
+      <div class="proglvl"><span>Level</span><b id="plevel">1</b></div>
+      <div class="progxp">
+        <div class="progbar"><i id="pbar"></i></div>
+        <div id="pxptext" class="progxptext"></div>
+      </div>
+      <div class="progfree"><span>XP to spend</span><b id="pfree">0</b></div>
+    </div>
+    <div class="prognations"><button class="pnat" data-n="de">Germany</button><button class="pnat" data-n="su">Soviet Union</button></div>
+    <div id="ptree" class="ptree"></div>
+    <div class="progfoot">
+      <span class="proto">Prototype &middot; saved in this browser &middot; doesn't lock vehicles in battle yet</span>
+      <button id="pgive" class="btn secondary psmall">+1,000 XP</button>
+      <button id="preset" class="btn secondary psmall">Reset</button>
+      <button id="pclose" class="btn secondary">Close (Esc)</button>
+    </div>
+  </div>
 </div>
 
 <!-- faction info: ranks and vehicles of each side (from the start menu or the deploy map) -->
