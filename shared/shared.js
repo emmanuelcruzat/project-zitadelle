@@ -19,8 +19,24 @@ function turnToward(cur, target, step) {
 }
 const lerpAngle = (a, b, t) => a + angDiff(b, a) * t;
 
+// ---------- map ----------
+// The battlefield comes from a map definition in shared/maps/ (data only), built by shared/mapgen.js on the
+// server. Which map runs is ZITADELLE_MAP. Browsers don't rebuild it: the server sends the definition and the
+// finished layout in /map.js, so what the page draws is exactly what the server collides against (two JS engines
+// can disagree in the last bit of a float, which is enough to move a building).
+// Rules for every map: lines run from the attacker's starts to the defender's goals (see the top of mapgen.js).
+// Each battle the server opens some of the lines (OPEN_LINES). The attacker wins by holding every goal that an
+// open line leads to, all at once; the defender wins when every open line is defeated (or the clock runs out).
+const IS_NODE = typeof module !== 'undefined' && module.exports;
+const MAP_DEFS = IS_NODE ? require('./maps') : (root.ZMAPS || {});
+const MAP_ID = (() => {
+  const want = IS_NODE ? process.env.ZITADELLE_MAP : root.ZITADELLE_MAP;
+  return MAP_DEFS[want] ? want : MAP_DEFS.kursk ? 'kursk' : Object.keys(MAP_DEFS)[0];
+})();
+const MAP = MAP_DEFS[MAP_ID];
+
 // ---------- world ----------
-const WORLD = 8000;
+const WORLD = MAP.world || 8000;  // each map sets its own size
 const CENTER = WORLD / 2;
 const TEAM_SIZE = 8;          // humans + bots per side
 const TICK_RATE = 60;         // simulation steps per second
@@ -31,53 +47,28 @@ const TEAM_IDS = ['de', 'su', 'x'];   // 'x' = neutral (pillbox)
 const KINDS = ['shell', 'mg', 'rocket'];
 const enemyOf = t => (t === 'de' ? 'su' : 'de');
 
-// ---------- objectives: two attack lines converging on O1 ----------
-// Line A: A5 → A4 → A3 → A2 → A1 → O1, line B: B5 → … → B1 → O1. At the start the attacker holds A5 and B5,
-// the defender holds O1, everything else is neutral. A side may only fight for a point next to one it holds
-// (attackers work up from X5, defenders down from O1); everything else is locked. If the defender takes
-// X5, that line is defeated: it locks and its rear assembly area is lost. The attacker wins by taking O1;
-// the defender wins when both lines are defeated. A side that has used up all its reserves and has no
-// vehicles left on the field also loses.
-const ATTACKER = 'de', DEFENDER = 'su';
-const CAP_R = 400;                 // capture zone radius (each point's own is p.r)
-const O1_R = 600, O1_CAP = 2;      // Prokhorovka: a bigger zone that takes O1_CAP times as long to capture
-const LINES = ['A', 'B'];
-const OBJ = { x: 6300, y: 1700 };  // O1, Prokhorovka
-const LINE_START = { A: { x: 900, y: 4400 }, B: { x: 3600, y: 7100 } };
-const LINE_BOW = { A: -1, B: 1 };  // which way each line bows out, so the two stay apart
-const LINE_NAMES = {
-  A: ['Bykovka', 'Yakovlevo', 'Pokrovka', 'Teterevino', 'Oktyabrsky'],
-  B: ['Belenikhino', 'Leski', 'Shakhovo', 'Vinogradovka', 'Storozhevoye'],
-};
-const LINE_T = [0, 0.2, 0.4, 0.6, 0.78];
-const CAP_POINTS = [];
-for (const L of LINES) {
-  const s = LINE_START[L], dx = OBJ.x - s.x, dy = OBJ.y - s.y, len = Math.hypot(dx, dy);
-  const px = -dy / len * LINE_BOW[L], py = dx / len * LINE_BOW[L];   // perpendicular, bowing outward
-  LINE_T.forEach((t, k) => {
-    const bow = 650 * Math.sin(Math.PI * t);
-    CAP_POINTS.push({ id: L + (5 - k), name: LINE_NAMES[L][k], line: L, k, r: CAP_R, capScale: 1,
-      x: Math.round(s.x + dx * t + px * bow), y: Math.round(s.y + dy * t + py * bow) });
-  });
-}
-CAP_POINTS.push({ id: 'O1', name: 'Prokhorovka', line: null, k: 5, x: OBJ.x, y: OBJ.y, r: O1_R, capScale: O1_CAP });
-const O_IDX = CAP_POINTS.length - 1;
-// neighbours: prev = toward the attacker's start, next = toward O1
-CAP_POINTS.forEach((p, i) => {
-  if (p.line) { p.prev = p.k > 0 ? [i - 1] : []; p.next = p.k < 4 ? i + 1 : O_IDX; }
-  else { p.prev = CAP_POINTS.filter(q => q.line && q.k === 4).map(q => CAP_POINTS.indexOf(q)); p.next = -1; }
-});
-// Rear assembly areas: one behind the start of each attack line, one behind O1. No protection, just
-// where reinforcements arrive. An attack line's rear is lost when the line is defeated.
-const REARS = (() => {
-  const out = [];
-  for (const L of LINES) {
-    const s = LINE_START[L], dx = OBJ.x - s.x, dy = OBJ.y - s.y, len = Math.hypot(dx, dy);
-    out.push({ team: ATTACKER, line: L, name: 'Rear ' + L, x: clamp(s.x - dx / len * 700, 450, WORLD - 450), y: clamp(s.y - dy / len * 700, 450, WORLD - 450) });
-  }
-  out.push({ team: DEFENDER, line: null, name: 'Rear', x: OBJ.x + 650, y: OBJ.y - 650 });
-  return out;
+const CAP_R = 400;                 // default capture zone radius (each point's own is p.r)
+const MAP_BUILT = IS_NODE ? require('./mapgen.js').buildMap(MAP, { WORLD, CAP_R }) : root.ZMAP_BUILT;
+const { ATTACKER, DEFENDER, LINES, NPT, CAP_POINTS, GOALS, REARS, BUILDINGS, HAMLETS, STREETS, PARKS, RIVER, FORESTS } = MAP_BUILT;
+// rivers: vehicles stay out of the water except on bridges, and bots route over the bridges (no-op without a river)
+const WATER = (IS_NODE ? require('./water.js') : root.ZWATER).makeWater(RIVER);
+// woods: slower going and hard to spot inside (no-op without forests)
+const WOODS = (IS_NODE ? require('./forest.js') : root.ZFOREST).makeForests(FORESTS);
+// Fingerprint of the battlefield. The page gets the server's with the layout (/map.js) and the server repeats it
+// when a browser connects; if they differ, the server has been restarted with another map since the page loaded.
+const MAP_SIG = !IS_NODE && root.ZMAP_SIG ? root.ZMAP_SIG : (() => {
+  const r = v => Math.round(v);
+  const parts = [MAP_ID, WORLD, CAP_POINTS.map(p => [p.id, r(p.x), r(p.y), r(p.r)].join()).join(';'),
+    BUILDINGS.map(b => [r(b.x), r(b.y), r(b.w), r(b.h), b.kind].join()).join(';'),
+    RIVER ? RIVER.bridges.map(b => [r(b.x), r(b.y)].join()).join(';') + '|' + RIVER.pts.length : '',
+    FORESTS.map(f => f.pts.join()).join(';')].join('#');
+  let h = 2166136261;   // FNV-1a
+  for (let i = 0; i < parts.length; i++) { h ^= parts.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return MAP_ID + ':' + h.toString(36) + ':' + BUILDINGS.length;
 })();
+// how many attack lines are open each battle, [min, max]; the server picks which (default: all of them)
+const OPEN_LINES = MAP.openLines || [LINES.length, LINES.length];
+const O_IDX = GOALS[0];            // the first goal, for code that only needs one
 const CAP_TIME = 12;               // seconds for one tank to take a point from neutral
 const ROUND_END = 30;              // seconds between battles (the only time you can switch sides)
 const BATTLE_TIME = 20 * 60;       // battle length in seconds; if the clock runs out, the defenders win
@@ -112,7 +103,7 @@ function viewSize(fov, w, h) {
 // Every gameplay number (speed, hp, traverse, view range, gun reload/damage/range..., calibre, armour,
 // logistics) lives in armor.js. What's defined here is what a vehicle is and how it's drawn: name, shape,
 // barrel geometry, weapon kind. def() merges the two.
-const ARMOR = typeof module !== 'undefined' && module.exports ? require('./armor.js') : root.ZARMOR;
+const ARMOR = IS_NODE ? require('./armor.js') : root.ZARMOR;
 // barrel geometry and weapon kind; its stats are merged in from armor.js by def()
 function G(o) {
   return Object.assign({ off: 0, ang: 0, len: 1.5, w: 0.28, size: 1, delay: 0, kind: 'shell', brake: false }, o);
@@ -444,60 +435,6 @@ const STEER_INFO = {
 };
 
 // ---------- hamlets: static, indestructible cover ----------
-// Generated from a fixed seed, so the server and every client build the same villages. Each building is an
-// oriented rectangle {x, y, w, h, a} that blocks vehicles, crates and shells.
-const BUILDINGS = [], HAMLETS = [];
-(function genHamlets() {
-  let seed = 1943;
-  const rnd = (a, b) => { seed = (seed * 16807) % 2147483647; return a + (seed / 2147483647) * (b - a); };
-  // keep at least a tank's width of driveable gap between any two buildings
-  const fits = b => BUILDINGS.every(o => Math.hypot(o.x - b.x, o.y - b.y) > o.br + b.br + 70);
-  function hamlet(cx, cy, big, name) {
-    const ang = rnd(0, Math.PI), n = big ? 9 + (rnd(0, 4) | 0) : 4 + (rnd(0, 4) | 0);
-    const len = big ? 760 : 460;
-    const h = { x: cx, y: cy, a: ang, len, name, big, b0: BUILDINGS.length };
-    const streets = [ang];
-    if (big || rnd(0, 1) < 0.3) streets.push(ang + Math.PI / 2 + rnd(-0.3, 0.3));
-    h.streets = streets;
-    if (name === 'Prokhorovka') {   // the church on the square
-      const b = { x: cx + Math.cos(ang + 0.8) * 150, y: cy + Math.sin(ang + 0.8) * 150, w: 155, h: 96, a: ang, kind: 'church', s: 0.5 };
-      b.br = Math.hypot(b.w, b.h) / 2; BUILDINGS.push(b);
-    }
-    let tries = 0, placed = 0;
-    while (placed < n && tries++ < n * 14) {
-      const sa = streets[(rnd(0, streets.length)) | 0];
-      const along = rnd(-len / 2, len / 2), side = rnd(0, 1) < 0.5 ? -1 : 1;
-      const r = rnd(0, 1), kind = r < 0.17 ? 'barn' : r < 0.32 ? 'ruin' : 'house';
-      const w = kind === 'barn' ? rnd(165, 215) : rnd(82, 128), d = kind === 'barn' ? rnd(78, 98) : rnd(56, 78);
-      const off = side * (66 + d / 2 + rnd(0, 45));
-      const ca = Math.cos(sa), sn = Math.sin(sa);
-      const b = { x: cx + ca * along - sn * off, y: cy + sn * along + ca * off, w, h: d, a: sa + rnd(-0.08, 0.08), kind, s: rnd(0, 1) };
-      b.br = Math.hypot(w, d) / 2;
-      if (b.x < 200 || b.y < 200 || b.x > WORLD - 200 || b.y > WORLD - 200 || !fits(b)) continue;
-      BUILDINGS.push(b); placed++;
-    }
-    h.b1 = BUILDINGS.length; HAMLETS.push(h);
-  }
-  CAP_POINTS.forEach(p => hamlet(p.x, p.y, true, p.name));
-  // smaller farmsteads scattered along and between the two attack lines
-  const segs = [];
-  for (const L of LINES) {
-    const pts = CAP_POINTS.filter(p => p.line === L).concat([OBJ]);
-    for (let i = 0; i < pts.length - 1; i++) segs.push([pts[i], pts[i + 1]]);
-  }
-  const segDist = (x, y, a, b) => {
-    const dx = b.x - a.x, dy = b.y - a.y, t = clamp(((x - a.x) * dx + (y - a.y) * dy) / (dx * dx + dy * dy), 0, 1);
-    return Math.hypot(a.x + dx * t - x, a.y + dy * t - y);
-  };
-  let tries = 0;
-  while (HAMLETS.length < CAP_POINTS.length + 24 && tries++ < 6000) {
-    const x = rnd(450, WORLD - 450), y = rnd(450, WORLD - 450);
-    if (Math.min(...segs.map(([a, b]) => segDist(x, y, a, b))) > 1800) continue;
-    if (HAMLETS.some(h => Math.hypot(h.x - x, h.y - y) < (h.big ? 1000 : 750))) continue;
-    if (REARS.some(r => Math.hypot(r.x - x, r.y - y) < 1000)) continue;
-    hamlet(x, y, false, null);
-  }
-})();
 // spatial grid so collision queries only look at nearby buildings
 const BCELL = 400, BGN = Math.ceil(WORLD / BCELL);
 const BGRID = Array.from({ length: BGN * BGN }, () => []);
@@ -650,6 +587,7 @@ const Z = {
   TEAM_IDS, KINDS, enemyOf, viewSize,
   BUILDINGS, HAMLETS, bldCollide, bldHit, bldLine, bldRay,
   CLASSES, CLASS_IDS, START_CLASS, OB, OB_TYPES,
+  MAP, MAP_ID, MAP_BUILT, GOALS, NPT, STREETS, PARKS, RIVER, WATER, OPEN_LINES, FORESTS, WOODS, MAP_SIG,
   ATTACKER, DEFENDER, CAP_R, CAP_POINTS, O_IDX, LINES, CAP_TIME, ROUND_END, BATTLE_TIME, CATS, RESERVES,
   RELOAD_MULT, DMG_MULT, TRAVERSE_MULT, CASEMATE_ARC, STEER_INFO, mgSummary, ROLES, RANKS, RANK_SCORE, rankForScore, FACTIONS,
 };

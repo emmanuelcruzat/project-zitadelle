@@ -5,8 +5,8 @@ const {
   TAU, rand, pick, clamp, lerp, angDiff, turnToward,
   WORLD, CENTER, REARS, TEAM_SIZE, enemyOf, viewSize, bldCollide, bldHit, bldLine,
   CLASSES, CLASS_IDS, START_CLASS, OB, OB_TYPES, TEAM_IDS, KINDS,
-  RANKS, rankForScore, ATTACKER, DEFENDER, CAP_R, CAP_POINTS, O_IDX, LINES, CAP_TIME, ROUND_END, BATTLE_TIME, CATS, RESERVES,
-  RELOAD_MULT, DMG_MULT, TRAVERSE_MULT, CASEMATE_ARC,
+  RANKS, rankForScore, ATTACKER, DEFENDER, CAP_R, CAP_POINTS, GOALS, LINES, CAP_TIME, ROUND_END, BATTLE_TIME, CATS, RESERVES,
+  RELOAD_MULT, DMG_MULT, TRAVERSE_MULT, CASEMATE_ARC, WATER, OPEN_LINES, WOODS,
 } = Z;
 // armour / penetration data lives in its own file, keyed by vehicle id
 const ARMOR = require('../shared/armor.js');
@@ -61,15 +61,26 @@ function createGame(opts = {}) {
   const points = CAP_POINTS.map((p, i) => ({ i, id: p.id, name: p.name, x: p.x, y: p.y, r: p.r, capScale: p.capScale, line: p.line, k: p.k,
     prev: p.prev, next: p.next, prog: 0, owner: null, contested: false, active: false, canAtt: false, canDef: false, nd: 0, ns: 0 }));
   const sgn = team => (team === 'de' ? 1 : -1);
-  const lineDead = { A: false, B: false };
-  // Reserve pools. The attacker has one per attack line (its RESERVES split evenly); a defeated line's
+  const lineDead = Object.fromEntries(LINES.map(L => [L, false]));
+  // Each battle only some lines may be open (the map's OPEN_LINES, [min, max]). A closed line is out of the
+  // battle: its points are neutral and locked, its rear is unavailable, and it counts as defeated. A goal
+  // whose lines are all closed is out of the battle too; the attacker only has to take the open goals.
+  const lineClosed = Object.fromEntries(LINES.map(L => [L, false]));
+  function pickOpenLines() {
+    const [lo, hi] = OPEN_LINES, n = clamp(lo + Math.floor(Math.random() * (hi - lo + 1)), 1, LINES.length);
+    const order = LINES.slice();
+    for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+    for (const L of LINES) lineClosed[L] = !order.slice(0, n).includes(L);
+  }
+  const goalOpen = i => points[i].prev.some(j => !lineClosed[points[j].line]);
+  // Reserve pools. The attacker has one per open attack line (its RESERVES split evenly); a defeated line's
   // pool is lost with it. The defender has a single pool.
   let reserves = null;
   function resetReserves() {
     reserves = {};
     for (const team of ['de', 'su']) {
       reserves[team] = team === ATTACKER
-        ? Object.fromEntries(LINES.map(L => [L, RESERVES[team].map(n => Math.floor(n / LINES.length))]))
+        ? Object.fromEntries(LINES.map(L => [L, RESERVES[team].map(n => (lineClosed[L] ? 0 : Math.floor(n / LINES.filter(l => !lineClosed[l]).length)))]))
         : { all: RESERVES[team].slice() };
     }
   }
@@ -101,9 +112,10 @@ function createGame(opts = {}) {
     }
   }
   function resetPoints() {
-    lineDead.A = lineDead.B = false;
+    pickOpenLines();
+    for (const L of LINES) lineDead[L] = lineClosed[L];
     for (const p of points) {
-      p.owner = p.line && p.k === 0 ? ATTACKER : !p.line ? DEFENDER : null;
+      p.owner = p.line && lineClosed[p.line] ? null : p.line && p.k === 0 ? ATTACKER : !p.line ? DEFENDER : null;
       p.prog = p.owner ? sgn(p.owner) : 0; p.contested = false;
     }
     resetReserves();
@@ -410,6 +422,7 @@ function createGame(opts = {}) {
       // a clutch-brake pivot drives one track while the other is locked, so the hull creeps forward
       if (c.steer === 'clutch' && rot && !th) want = this.speed * 0.12;
       if (engineDown) want *= ARMOR.ENGINE_SPEED;
+      want *= WOODS.speed(this.x, this.y);                            // woods are slow going
       if (tracksDown) want = 0;                                        // immobilised
       const speeding = Math.abs(want) > Math.abs(fwd) && (fwd === 0 || Math.sign(want) === Math.sign(fwd));
       const rate = speeding ? this.accel : 1.8;                     // engines build up slowly, brakes bite harder
@@ -419,6 +432,7 @@ function createGame(opts = {}) {
       this.x = clamp(this.x + this.vx * dt, this.r, WORLD - this.r);
       this.y = clamp(this.y + this.vy * dt, this.r, WORLD - this.r);
       bldCollide(this, this.r);                                       // houses and barns are solid
+      WATER.collide(this, this.r);                                    // rivers: only bridges cross
 
       if (this.hp < this.maxHp) {
         const boost = time - this.lastHit > 9 ? 3.5 : 1;               // crews patch up once out of contact
@@ -556,10 +570,10 @@ function createGame(opts = {}) {
 
   function updateBattle(dt) {
     if (phase === 'play') {
-      // O1 taken, both lines defeated, or one side out of reserves with nothing left on the field
+      // every goal held by the attacker, every line defeated, or one side out of reserves with nothing left on the field
       const spent = team => reserveLeft(team) <= 0 && !tanks.some(k => k.alive && k.team === team);
       let w = null;
-      if (points[O_IDX].owner === ATTACKER) w = ATTACKER;
+      if (GOALS.filter(goalOpen).every(i => points[i].owner === ATTACKER)) w = ATTACKER;
       else if (LINES.every(L => lineDead[L])) w = DEFENDER;
       else if (spent(ATTACKER)) w = DEFENDER;
       else if (spent(DEFENDER)) w = ATTACKER;
@@ -786,10 +800,13 @@ function createGame(opts = {}) {
       let sc = -d / 1600 + rand(0, 1.2) - allies * 0.4 - lineAllies * 0.12;
       if (mine) sc += enemies > 0 || Math.abs(p.prog) < 0.999 ? 2.4 : ai.defender ? 0.8 : -0.2;   // under threat
       else sc += p.owner ? 1.4 : 2;                                                              // neutral first
-      if (!p.line) sc += att ? 1.5 : 1;                                                          // O1 matters most
+      if (!p.line) sc += att ? 1.5 : 1;                                                          // the goals matter most
       if (sc > bs) { bs = sc; best = p.i; }
     }
-    if (best < 0) best = att ? O_IDX : points.find(p => p.k === 0 && !lineDead[p.line]) ? points.find(p => p.k === 0 && !lineDead[p.line]).i : O_IDX;
+    if (best < 0) {   // nothing open: attackers head for a goal they don't hold, defenders for a live line's start
+      const goal = GOALS.find(i => goalOpen(i) && points[i].owner !== ATTACKER) ?? GOALS.find(goalOpen) ?? GOALS[0], start = points.find(p => p.k === 0 && !lineDead[p.line]);
+      best = att ? goal : start ? start.i : goal;
+    }
     const a = rand(0, TAU), r = Math.sqrt(Math.random()) * points[best].r * 0.55;
     ai.ox = Math.cos(a) * r; ai.oy = Math.sin(a) * r;
     return best;
@@ -882,7 +899,10 @@ function createGame(opts = {}) {
   function steerAround(t, mx, my) {
     const ai = t.ai, a0 = Math.atan2(my, mx), ml = Math.hypot(mx, my);
     const clear = a => {
-      for (const d of [t.r + 25, t.r + 80, t.r + 150]) if (bldHit(t.x + Math.cos(a) * d, t.y + Math.sin(a) * d, t.r * 0.95)) return false;
+      for (const d of [t.r + 25, t.r + 80, t.r + 150]) {
+        const x = t.x + Math.cos(a) * d, y = t.y + Math.sin(a) * d;
+        if (bldHit(x, y, t.r * 0.95) || WATER.hit(x, y, t.r * 0.95)) return false;
+      }
       return true;
     };
     if (clear(a0)) return [mx, my];
@@ -948,7 +968,8 @@ function createGame(opts = {}) {
         const tracksTarget = ws.ratio < 1 && isHeavy(e.cls);
         const d = Math.hypot(e.x - t.x, e.y - t.y) * (bldLine(t.x, t.y, e.x, e.y) ? 1.6 : 1)
           * (ws.ratio >= 1 ? 1 : tracksTarget ? 1.3 : ws.ratio >= 0.7 ? 1.6 : 2.6)
-          / (isSpotted(t.team, e) ? SPOT_REACH : 1);
+          / (isSpotted(t.team, e) ? SPOT_REACH : 1)
+          * (WOODS.inside(e.x, e.y) && !isSpotted(t.team, e) ? WOODS.HIDE : 1);   // hard to pick out among the trees
         if (d < bd) { bd = d; best = e; }
       }
       ai.tgt = best;
@@ -1023,7 +1044,8 @@ function createGame(opts = {}) {
       }
     }
     if (ai.retreat) {
-      const rx = rear.x - t.x, ry = rear.y - t.y, rd = Math.hypot(rx, ry) || 1;
+      const via = WATER.route(t.x, t.y, rear.x, rear.y) || rear;      // over a bridge if there's water in the way
+      const rx = via.x - t.x, ry = via.y - t.y, rd = Math.hypot(rx, ry) || 1;
       mx = rx / rd; my = ry / rd;
       if (e) fire = aimAt(spot.x, spot.y, e.vx, e.vy) && Math.hypot(e.x - t.x, e.y - t.y) < reach * 0.8;
     } else {
@@ -1031,7 +1053,8 @@ function createGame(opts = {}) {
       const p = points[ai.obj];
       let onObj = false;
       if (p) {
-        const gx = p.x + ai.ox, gy = p.y + ai.oy;
+        const via = WATER.route(t.x, t.y, p.x + ai.ox, p.y + ai.oy);    // over a bridge if there's water in the way
+        const gx = via ? via.x : p.x + ai.ox, gy = via ? via.y : p.y + ai.oy;
         const dx = gx - t.x, dy = gy - t.y, d = Math.hypot(dx, dy);
         onObj = Math.hypot(p.x - t.x, p.y - t.y) < p.r * 0.8;
         if (d > 60) { mx = dx / d; my = dy / d; }
@@ -1537,7 +1560,7 @@ function createGame(opts = {}) {
     const snap = { t: 's', tm: r3(time), T, B, O, E };
     // conquest state is tiny, so it goes out every snapshot
     snap.cp = points.map(p => [r2(p.prog), p.owner === 'de' ? 1 : p.owner === 'su' ? 2 : 0, p.contested ? 1 : 0, p.active ? 1 : 0, p.nd, p.ns, p.canAtt ? 1 : 0, p.canDef ? 1 : 0]);
-    snap.ln = LINES.map(L => (lineDead[L] ? 1 : 0));
+    snap.ln = LINES.map(L => (lineClosed[L] ? 2 : lineDead[L] ? 1 : 0));   // 2 = closed this battle, 1 = defeated
     snap.rs = [reserveTotal('de'), reserveTotal('su')];
     snap.rl = LINES.map(L => (lineDead[L] ? null : reserves[ATTACKER][L]));
     snap.ph = phase === 'play' ? 0 : [winner === 'de' ? 1 : 2, Math.ceil(phaseEnd - time), winWhy];
@@ -1574,6 +1597,11 @@ function createGame(opts = {}) {
   return {
     step, handle, addClient, removeClient, snapshotFor, endSnapshotRound,
     get time() { return time; },
+    get phase() { return phase; },
+    // read-only view of the battle, for tests and tools
+    inspect: () => ({ phase, winner, closed: { ...lineClosed }, dead: { ...lineDead },
+      points: points.map(p => ({ id: p.id, owner: p.owner })),
+      tanks: tanks.map(t => ({ team: t.team, alive: t.alive, bot: !!t.isBot, x: t.x, y: t.y, vx: t.vx, vy: t.vy, r: t.r })) }),
     stats: () => ({ tanks: tanks.length, humans: tanks.filter(t => !t.isBot).length, bullets: bullets.length, obstacles: obstacles.length, clients: clients.size }),
   };
 }

@@ -3,7 +3,8 @@
 'use strict';
 const {
   TAU, rand, pick, clamp, lerp, angDiff, lerpAngle,
-  WORLD, CENTER, REARS, BUILDINGS, HAMLETS, O_IDX, LINES, CATS, RESERVES,
+  WORLD, CENTER, REARS, BUILDINGS, HAMLETS, LINES, CATS, RESERVES,
+  MAP, MAP_ID, GOALS, NPT, STREETS, PARKS, RIVER, WATER, FORESTS, WOODS, MAP_SIG,
   CLASSES, CLASS_IDS, START_CLASS, OB, OB_TYPES, TEAM_IDS, KINDS, VIEW_W,
   CAP_POINTS, CAP_R, ATTACKER, DEFENDER, RANKS, RANK_SCORE,
 } = Z;
@@ -506,10 +507,14 @@ const Sound = (() => {
   return api;
 })();
 const HEAR = { ricochet: 2200, bounce: 400, cannon: 3800, boom: 3800, rocket: 3000, mg: 2000, hit: 1500, clank: 1500, reload: 400 };
+// everyone else's guns (main guns, MGs, rockets) play at this fraction of their volume, so your own stand out
+const GUN_SOUNDS = { cannon: 1, mg: 1, rocket: 1 }, OTHER_GUN_VOL = 0.65;
 function soundAt(kind, x, y, vol = 1, S = 1, own = false, x1) {
+  if (!you) return;   // the battle is only heard once you've joined it, not from the menus or the theatre map
   // small guns don't carry as far as big ones
   const reach = (HEAR[kind] || 1600) * (kind === 'cannon' ? clamp(S, 0.5, 1.4) : 1);
   const dn = own ? 0 : Math.hypot(x - cam.x, y - cam.y) / reach;
+  if (!own && GUN_SOUNDS[kind]) vol *= OTHER_GUN_VOL;
   Sound.play(kind, vol, dn, S, own, x1);
 }
 
@@ -563,7 +568,8 @@ function logiColor(f) {
   return `rgb(${c0.map((v, j) => Math.round(v + (c1[j] - v) * k)).join(',')})`;
 }
 const lineOf = i => CAP_POINTS[i].line;
-const isLineDead = L => !!lineDead[LINES.indexOf(L)];
+const isLineDead = L => !!lineDead[LINES.indexOf(L)];          // defeated, or closed this battle
+const isLineClosed = L => lineDead[LINES.indexOf(L)] === 2;   // not part of this battle
 const OWNER = [null, 'de', 'su'];
 let ping = 0;
 
@@ -592,6 +598,13 @@ function onMessage(m) {
     if (m.roster && m.roster !== CLASS_IDS.join(',') + '|' + (window.ZARMOR ? window.ZARMOR.COMPONENT_IDS.join(',') : '')) {
       rosterMismatch = true;
       setStatus('The server is running an older version of the game — restart the server, then reload this page.');
+      if (state !== 'menu') backToMenu();
+    }
+    // the battlefield is built on both ends from the same code: if they differ, the server would collide against
+    // buildings, water or woods this page doesn't draw (or the other way round)
+    else if (m.mapSig && m.mapSig !== MAP_SIG) {
+      rosterMismatch = true;
+      setStatus('The server is running an older version of the map — restart the server, then reload this page.');
       if (state !== 'menu') backToMenu();
     }
     return;
@@ -877,7 +890,7 @@ function drawEndScreen(myTeam) {
   const by = cy + fs * 1.08 + 28;
   ctx.globalAlpha = ease((a - 1.2) / 0.5);
   hudText(phase[2] === 1 ? `Time runs out — ${TEAMS[wt].name} holds the line`
-    : wt === ATTACKER ? `${TEAMS[wt].name} breaks through to ${CAP_POINTS[O_IDX].name}` : `${TEAMS[wt].name} holds the line`,
+    : wt === ATTACKER ? `${TEAMS[wt].name} ${MAP.attackerWins || 'takes every objective'}` : `${TEAMS[wt].name} holds the line`,
     cx, by, 17, '#d9cf9f', 'center', 400);
   if (you) {
     ctx.globalAlpha = ease((a - 1.5) / 0.5);
@@ -910,7 +923,7 @@ function battleIntro(team) {
   if (!TEAMS[team] || !INTRO_TEXT[team]) return;
   intro = { team, t: now };
   msg = { text: '', t: 0, dur: 0 };   // clear any pending banner so it doesn't sit under the intro
-  Sound.play('boom', 0.55, 0.45, 1.5);          // distant artillery rolling across the steppe
+  if (you) Sound.play('boom', 0.55, 0.45, 1.5);  // distant artillery rolling across the steppe
 }
 function drawIntro() {
   if (!intro) return;
@@ -1241,7 +1254,7 @@ function addMarks(t) {
 // =====================================================================
 // Decor (purely cosmetic, generated locally)
 // =====================================================================
-const decor = { fields: [], craters: [], bushes: [], roads: [], gardens: [], trees: [] };
+const decor = { fields: [], craters: [], bushes: [], roads: [], gardens: [], trees: [], lawns: [] };
 const rpickC = arr => arr[Math.floor(Math.random() * arr.length)];
 (function genDecor() {
   // seeded so every player sees the same steppe
@@ -1250,23 +1263,39 @@ const rpickC = arr => arr[Math.floor(Math.random() * arr.length)];
   const rpick = arr => arr[Math.floor(rnd(0, arr.length))];
   const nearHouse = (x, y, m) => BUILDINGS.some(b => Math.hypot(b.x - x, b.y - y) < b.br + m);
   const cols = ['#c3b679', '#aeab6d', '#bfae6a', '#b3a76b', '#c9bc84'];
-  for (let i = 0; i < 110; i++) decor.fields.push({ x: rnd(0, WORLD), y: rnd(0, WORLD), w: rnd(300, 700), h: rnd(220, 560), a: rnd(-0.4, 0.4), c: rpick(cols), rows: rnd(0, 1) < 0.7 });
-  // shell craters cluster along the front line (the bottom-left/top-right diagonal)
-  for (let i = 0; i < 360; i++) {
-    const t = rnd(0, 1), off = rnd(-1, 1) * rnd(0, 1) * 1800;
-    const x = WORLD * t + off / Math.SQRT2, y = WORLD * (1 - t) + off / Math.SQRT2;
+  const city = MAP.city, inTown = (x, y, m = 0) => !!city && Math.hypot(x - city.x, y - city.y) < city.r + m;
+  const area = (WORLD / 8000) ** 2;   // scenery counts scale with the size of the map
+  for (let i = 0; i < 110 * area; i++) {
+    const f = { x: rnd(0, WORLD), y: rnd(0, WORLD), w: rnd(300, 700), h: rnd(220, 560), a: rnd(-0.4, 0.4), c: rpick(cols), rows: rnd(0, 1) < 0.7 };
+    if (!inTown(f.x, f.y, 350) && !WATER.hit(f.x, f.y, Math.max(f.w, f.h) / 2) && !WOODS.inside(f.x, f.y)) decor.fields.push(f);   // farmland stops at the town and the river
+  }
+  // shell craters where the map says the fighting is: along a line (the front), or in a ring
+  const cr = MAP.craters || {};
+  for (let i = 0; i < (cr.count || 360 * area); i++) {
+    let x, y;
+    if (cr.ring) {
+      const a = rnd(0, TAU), d = rnd(cr.ring.r0, cr.ring.r1);
+      x = cr.ring.x + Math.cos(a) * d; y = cr.ring.y + Math.sin(a) * d;
+    } else {
+      const [[ax, ay], [bx, by]] = cr.along || [[0, WORLD], [WORLD, 0]], t = rnd(0, 1), off = rnd(-1, 1) * rnd(0, 1) * (cr.spread || 1800);
+      const len = Math.hypot(bx - ax, by - ay) || 1, nx = -(by - ay) / len, ny = (bx - ax) / len;
+      x = ax + (bx - ax) * t + nx * off; y = ay + (by - ay) * t + ny * off;
+    }
     decor.craters.push({ x, y, r: rnd(14, 46) });
   }
-  for (let i = 0; i < 170; i++) {
+  for (let i = 0; i < 170 * area; i++) {
     const x = rnd(0, WORLD), y = rnd(0, WORLD), n = 3 + Math.floor(rnd(0, 4)), blobs = [];
-    if (nearHouse(x, y, 60)) continue;
+    if (nearHouse(x, y, 60) || inTown(x, y, city ? -city.r * 0.4 : 0) || WATER.hit(x, y, 40) || WOODS.inside(x, y)) continue;   // no scrub in the town centre or the river
     for (let k = 0; k < n; k++) blobs.push([rnd(-30, 30), rnd(-30, 30), rnd(14, 30)]);
     decor.bushes.push({ x, y, blobs });
   }
-  // the main road: rear area -> every objective in order -> enemy rear, as smooth curves
-  const defRear = REARS.find(r => r.team === DEFENDER);
-  const chains = LINES.map(L => [REARS.find(r => r.line === L), ...CAP_POINTS.filter(p => p.line === L), CAP_POINTS[O_IDX]])
-    .concat([[CAP_POINTS[O_IDX], defRear]]);
+  // the main roads: each line's rear area -> its points in order -> its goal; each goal -> the defender's nearest rear
+  const goalOf = L => CAP_POINTS[CAP_POINTS.find(p => p.line === L && p.k === NPT - 1).next];
+  const defRears = REARS.filter(r => r.team === DEFENDER);
+  const nearestDefRear = p => defRears.reduce((a, b) => (Math.hypot(b.x - p.x, b.y - p.y) < Math.hypot(a.x - p.x, a.y - p.y) ? b : a));
+  const chains = LINES.map(L => [REARS.find(r => r.line === L), ...CAP_POINTS.filter(p => p.line === L), goalOf(L)])
+    .concat(GOALS.map(i => [CAP_POINTS[i], nearestDefRear(CAP_POINTS[i])]))
+    .map(nodes => nodes.filter((p, k) => !(k && inTown(p.x, p.y) && inTown(nodes[k - 1].x, nodes[k - 1].y))));   // in town the streets do it
   for (const nodes of chains) for (let i = 0; i < nodes.length - 1; i++) {
     const a = nodes[i], b = nodes[i + 1], dx = b.x - a.x, dy = b.y - a.y;
     decor.roads.push([a.x, a.y, a.x + dx * 0.33 + rnd(-200, 200), a.y + dy * 0.33 + rnd(-200, 200),
@@ -1286,13 +1315,28 @@ const rpickC = arr => arr[Math.floor(Math.random() * arr.length)];
   // a fenced kitchen garden behind most houses, orchard trees around the villages
   const hamletOf = b => HAMLETS.find(h => BUILDINGS.indexOf(b) >= h.b0 && BUILDINGS.indexOf(b) < h.b1);
   for (const b of BUILDINGS) {
-    if (b.kind === 'church' || rnd(0, 1) < 0.25) continue;
+    if (b.kind === 'church' || b.urban || rnd(0, 1) < 0.25) continue;
     const h = hamletOf(b);
     // "behind" = away from the street the house faces
     const nx = -Math.sin(b.a), ny = Math.cos(b.a);
-    const sd = h && ((b.x - h.x) * nx + (b.y - h.y) * ny) < 0 ? -1 : 1;
+    const sd = b.gs || (h && ((b.x - h.x) * nx + (b.y - h.y) * ny) < 0 ? -1 : 1);   // town houses know which side is the street
     const gd = rnd(70, 130), gw = b.w * rnd(0.9, 1.3);
     decor.gardens.push({ x: b.x + nx * sd * (b.h / 2 + gd / 2 + 6), y: b.y + ny * sd * (b.h / 2 + gd / 2 + 6), w: gw, h: gd, a: b.a, c: rpick(['#8e8f4f', '#9c9156', '#7f8748']) });
+  }
+  // woods: a canopy of crowns over each forest, packed tight, thinning at the edge
+  for (const f of FORESTS) {
+    f.trees = [];
+    const n = Math.round(Math.PI * f.r * f.r / 2300);
+    for (let i = 0; i < n; i++) {
+      const a = rnd(0, TAU), d = Math.sqrt(rnd(0, 1)) * f.r * 1.2, x = f.x + Math.cos(a) * d, y = f.y + Math.sin(a) * d;
+      if (!WOODS.inside(x, y)) continue;
+      f.trees.push({ x, y, r: rnd(24, 42), c: rpick(['#4d5c2c', '#56662f', '#465428', '#5d6b35', '#3f4c24']) });
+    }
+    f.trees.sort((p, q) => p.r - q.r);   // big crowns on top
+  }
+  for (const pk of PARKS) {   // town parks: a few trees on a lawn
+    decor.lawns.push(pk);
+    for (let i = 0; i < 4; i++) decor.trees.push({ x: pk.x + rnd(-pk.s / 3, pk.s / 3), y: pk.y + rnd(-pk.s / 3, pk.s / 3), r: rnd(16, 26), c: rpick(['#5d6b35', '#66733a', '#56632f']) });
   }
   for (const h of HAMLETS) {
     const n = h.big ? 14 : 6;
@@ -1540,6 +1584,49 @@ function drawPreview(cv, clsId, team, t = 0) {
 let view = { x0: 0, y0: 0, x1: 0, y1: 0 };
 const inView = (x, y, m) => x > view.x0 - m && x < view.x1 + m && y > view.y0 - m && y < view.y1 + m;
 
+// a built-up area (maps with a city): paving that fades out into the fields, park lawns, then the streets
+function drawTown(c) {
+  const city = MAP.city;
+  if (!city || !inView(city.x, city.y, city.r + 400)) return;
+  const g = c.createRadialGradient(city.x, city.y, city.core * 0.5, city.x, city.y, city.r + 300);
+  g.addColorStop(0, 'rgba(150,143,128,0.9)'); g.addColorStop(0.6, 'rgba(160,150,120,0.55)'); g.addColorStop(1, 'rgba(160,150,120,0)');
+  c.fillStyle = g; c.beginPath(); c.arc(city.x, city.y, city.r + 300, 0, TAU); c.fill();
+  c.fillStyle = 'rgba(112,128,70,0.85)';
+  for (const l of decor.lawns) if (inView(l.x, l.y, l.s)) { c.beginPath(); c.arc(l.x, l.y, l.s * 0.6, 0, TAU); c.fill(); }
+  c.lineCap = 'round'; c.lineJoin = 'round';
+  for (const [dw, col] of [[0, 'rgba(110,104,92,0.55)'], [-24, 'rgba(132,126,112,0.8)']]) {
+    c.strokeStyle = col;
+    for (const st of STREETS) {
+      c.lineWidth = st.w + dw; c.beginPath();
+      st.pts.forEach(([x, y], k) => (k ? c.lineTo(x, y) : c.moveTo(x, y)));
+      c.stroke();
+    }
+  }
+  c.lineCap = 'butt'; c.lineJoin = 'miter';
+}
+// rivers: banks, water, then the bridges
+function drawRiver(c) {
+  if (!RIVER) return;
+  c.lineCap = 'round'; c.lineJoin = 'round';
+  for (const [w, col] of [[RIVER.hw * 2 + 34, 'rgba(96,88,60,0.55)'], [RIVER.hw * 2, '#4f6f7c'], [RIVER.hw * 1.1, 'rgba(90,128,142,0.6)']]) {
+    c.strokeStyle = col; c.lineWidth = w; c.beginPath();
+    RIVER.pts.forEach(([x, y], k) => (k ? c.lineTo(x, y) : c.moveTo(x, y)));
+    c.stroke();
+  }
+  c.lineCap = 'butt'; c.lineJoin = 'miter';
+  for (const b of RIVER.bridges) {
+    if (!inView(b.x, b.y, RIVER.hw + 120)) continue;
+    const len = RIVER.hw * 2 + 70;
+    c.save(); c.translate(b.x, b.y); c.rotate(b.a);
+    c.fillStyle = 'rgba(30,25,15,0.35)'; c.fillRect(-b.hw + 8, -len / 2 + 10, b.hw * 2, len);   // shadow
+    c.fillStyle = '#8f7a5a'; c.fillRect(-b.hw, -len / 2, b.hw * 2, len);                       // deck
+    c.strokeStyle = 'rgba(60,45,25,0.35)'; c.lineWidth = 2; c.beginPath();
+    for (let y = -len / 2 + 12; y < len / 2; y += 14) { c.moveTo(-b.hw, y); c.lineTo(b.hw, y); }
+    c.stroke();
+    c.fillStyle = '#5d4c35'; c.fillRect(-b.hw - 6, -len / 2, 10, len); c.fillRect(b.hw - 4, -len / 2, 10, len);   // rails
+    c.restore();
+  }
+}
 function drawGround() {
   const c = ctx;
   c.fillStyle = '#b8ae79';
@@ -1558,6 +1645,12 @@ function drawGround() {
     c.restore();
   }
   c.globalAlpha = 1;
+  drawTown(c);
+  drawRiver(c);
+  for (const f of FORESTS) {   // forest floor, under the canopy
+    if (!inView(f.x, f.y, f.r * 1.3)) continue;
+    c.fillStyle = 'rgba(78,86,46,0.75)'; c.beginPath(); f.pts.forEach(([x, y], k) => (k ? c.lineTo(x, y) : c.moveTo(x, y))); c.closePath(); c.fill();
+  }
   c.lineCap = 'round';
   for (const r of decor.roads) {
     c.beginPath(); c.moveTo(r[0], r[1]); c.bezierCurveTo(r[2], r[3], r[4], r[5], r[6], r[7]);
@@ -1614,9 +1707,11 @@ const ptColor = owner => PT_COL[owner || 'none'];
 function drawRoute(c, k, ox, oy, w) {
   c.lineWidth = w; c.setLineDash([w * 3, w * 2]);
   for (const L of LINES) {
+    if (isLineClosed(L)) continue;   // not part of this battle
     c.strokeStyle = isLineDead(L) ? 'rgba(150,40,30,0.35)' : 'rgba(70,58,38,0.45)';
     c.beginPath();
-    CAP_POINTS.filter(p => p.line === L).concat([CAP_POINTS[O_IDX]])
+    const pts = CAP_POINTS.filter(p => p.line === L);
+    pts.concat([CAP_POINTS[pts[pts.length - 1].next]])
       .forEach((p, i) => (i ? c.lineTo(ox + p.x * k, oy + p.y * k) : c.moveTo(ox + p.x * k, oy + p.y * k)));
     c.stroke();
   }
@@ -1695,7 +1790,8 @@ function drawMarks() {
 }
 
 // top-down houses: shadow, two-pitch roof with a ridge, thatch/plank texture; ruins are roofless shells
-const ROOFS = { house: [['#bba366', '#9d874f'], ['#c7b27a', '#a8925c'], ['#a7905a', '#8a7545']], barn: [['#7d6a52', '#635341']], church: [['#7f9a86', '#62796a']] };
+const ROOFS = { house: [['#bba366', '#9d874f'], ['#c7b27a', '#a8925c'], ['#a7905a', '#8a7545']], barn: [['#7d6a52', '#635341']], church: [['#7f9a86', '#62796a']],
+  block: [['#a0624c', '#83503e'], ['#8f8a80', '#76716a'], ['#a87a5a', '#8a6248'], ['#7e6f62', '#665a50']] };   // town: tiled and slate roofs
 function drawBuilding(c, b) {
   const hw = b.w / 2, hh = b.h / 2;
   c.save(); c.translate(b.x + 9, b.y + 11); c.rotate(b.a);
@@ -1718,7 +1814,7 @@ function drawBuilding(c, b) {
   }
   const set = ROOFS[b.kind] || ROOFS.house, [lt, dk] = set[Math.floor(b.s * set.length) % set.length];
   // whitewashed wall edge peeking out under the eaves
-  c.fillStyle = b.kind === 'barn' ? '#5a4a38' : '#e4dcc4'; c.fillRect(-hw, -hh, b.w, b.h);
+  c.fillStyle = b.kind === 'barn' ? '#5a4a38' : b.kind === 'block' ? '#b5aa96' : '#e4dcc4'; c.fillRect(-hw, -hh, b.w, b.h);
   const e = 3;
   c.fillStyle = lt; c.fillRect(-hw + e, -hh + e, b.w - 2 * e, hh - e);
   c.fillStyle = dk; c.fillRect(-hw + e, 0, b.w - 2 * e, hh - e);
@@ -1741,6 +1837,32 @@ function drawBuilding(c, b) {
 }
 function drawBuildings() {
   for (const b of BUILDINGS) if (inView(b.x, b.y, b.br + 20)) drawBuilding(ctx, b);
+}
+// the woods' canopy goes over vehicles, so what's under the trees is hidden, except a clearing round your own tank
+function drawCanopy() {
+  if (!FORESTS.length) return;
+  const me = state === 'play' ? myTank() : null;
+  ctx.save();
+  if (me && WOODS.inside(me.x, me.y)) {
+    ctx.beginPath(); ctx.rect(view.x0 - 100, view.y0 - 100, view.x1 - view.x0 + 200, view.y1 - view.y0 + 200);
+    ctx.arc(me.x, me.y, me.r * 3.2, 0, TAU); ctx.clip('evenodd');
+  }
+  for (const f of FORESTS) {
+    if (!inView(f.x, f.y, f.r * 1.3)) continue;
+    ctx.fillStyle = 'rgba(30,32,15,0.3)';
+    for (const t of f.trees) if (inView(t.x, t.y, t.r + 20)) { ctx.beginPath(); ctx.arc(t.x + 8, t.y + 10, t.r, 0, TAU); ctx.fill(); }
+    for (const t of f.trees) {
+      if (!inView(t.x, t.y, t.r + 10)) continue;
+      ctx.fillStyle = t.c; ctx.beginPath(); ctx.arc(t.x, t.y, t.r, 0, TAU); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,200,0.08)'; ctx.beginPath(); ctx.arc(t.x - t.r * 0.25, t.y - t.r * 0.3, t.r * 0.55, 0, TAU); ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+// the woods on the minimap and the battle map (scale k, offset ox/oy)
+function drawForestMap(c, k, ox, oy) {
+  c.fillStyle = 'rgba(70,90,45,0.75)';
+  for (const f of FORESTS) { c.beginPath(); f.pts.forEach(([x, y], i) => (i ? c.lineTo(ox + x * k, oy + y * k) : c.moveTo(ox + x * k, oy + y * k))); c.closePath(); c.fill(); }
 }
 function drawTrees() {
   for (const t of decor.trees) {
@@ -2082,6 +2204,7 @@ function renderWorld() {
   for (const t of vTanks) if (inView(t.x, t.y, t.r * 4)) drawTankWorld(t);
   drawBushes();
   drawTrees();
+  drawCanopy();
   drawParticles('top');
   for (const t of vTanks) if (inView(t.x, t.y, t.r * 4)) drawLabels(t);
 
@@ -2256,27 +2379,38 @@ function drawPointIcon(i, x, y, R) {
 function drawHUD() {
   const cx = W / 2;
   rsvDrops = rsvDrops.filter(d => now - d.t < 1.2);
-  // ---- battle status: both attack lines converging on O1, and both sides' reserves ----
+  // ---- battle status: one group per goal with its attack lines converging on it, and both sides' reserves ----
   const myTeam = you ? you.team : null;
   {
-    const step = 40, rowY = [24, 62], midY = 43;
-    const x0 = cx - (5 * step + 20) / 2;
-    const iconX = k => x0 + k * step;
-    const ox = x0 + 5 * step + 40;          // O1, with room before it for the elbow
-    const ex = x0 + 4 * step + 40;          // where both lines bend toward O1
-    LINES.forEach((L, li) => {
-      const y = rowY[li], dead = isLineDead(L);
-      ctx.strokeStyle = dead ? 'rgba(220,70,50,0.6)' : 'rgba(230,220,190,0.4)'; ctx.lineWidth = 2;
-      // elbow connector: along the row, a right angle to O1's height, then straight into O1
-      ctx.beginPath(); ctx.moveTo(iconX(0), y); ctx.lineTo(ex, y); ctx.lineTo(ex, midY); ctx.lineTo(ox, midY); ctx.stroke();
-      CAP_POINTS.forEach((p, i) => { if (p.line === L) drawPointIcon(i, iconX(p.k), y, 14); });
-      if (dead) {
-        ctx.strokeStyle = 'rgba(230,70,50,0.9)'; ctx.lineWidth = 3;
-        ctx.beginPath(); ctx.moveTo(iconX(0) - 18, y); ctx.lineTo(iconX(4) + 18, y); ctx.stroke();
-        hudText('DEFEATED', iconX(2), y, 13, '#ff8a6a');
-      }
+    const step = 40, rowY = [24, 62], midY = 43, gap = 26;
+    const groups = GOALS.map(gi => ({ gi, lines: CAP_POINTS[gi].prev.map(j => CAP_POINTS[j].line) }));
+    const gw = NPT * step + 20 + (GOALS.length > 1 ? 40 : 0);   // one group: its lines' points, the elbow, the goal (and room to clear it)
+    const x0 = cx - (groups.length * gw + (groups.length - 1) * gap) / 2;
+    let ox = 0;                            // the last goal's x: the clock goes just right of it
+    groups.forEach((g, n) => {
+      const gx = x0 + n * (gw + gap);
+      const iconX = k => gx + k * step;
+      ox = gx + NPT * step + 40;            // the goal, with room before it for the elbow
+      const ex = gx + (NPT - 1) * step + 40; // where the lines bend toward it
+      const goalClosed = g.lines.every(isLineClosed);
+      g.lines.forEach((L, li) => {
+        const y = g.lines.length === 1 ? midY : rowY[li], dead = isLineDead(L), closed = isLineClosed(L);
+        if (closed) ctx.globalAlpha = 0.3;   // not part of this battle
+        ctx.strokeStyle = dead ? 'rgba(220,70,50,0.6)' : 'rgba(230,220,190,0.4)'; ctx.lineWidth = 2;
+        // elbow connector: along the row, a right angle to the goal's height, then straight into it
+        ctx.beginPath(); ctx.moveTo(iconX(0), y); ctx.lineTo(ex, y); ctx.lineTo(ex, midY); ctx.lineTo(ox, midY); ctx.stroke();
+        CAP_POINTS.forEach((p, i) => { if (p.line === L) drawPointIcon(i, iconX(p.k), y, 14); });
+        if (closed) { ctx.globalAlpha = 1; hudText('CLOSED', iconX((NPT - 1) / 2), y, 12, '#c9c1a0'); }
+        else if (dead) {
+          ctx.strokeStyle = 'rgba(230,70,50,0.9)'; ctx.lineWidth = 3;
+          ctx.beginPath(); ctx.moveTo(iconX(0) - 18, y); ctx.lineTo(iconX(NPT - 1) + 18, y); ctx.stroke();
+          hudText('DEFEATED', iconX((NPT - 1) / 2), y, 13, '#ff8a6a');
+        }
+      });
+      if (goalClosed) ctx.globalAlpha = 0.3;
+      drawPointIcon(g.gi, ox, midY, 17);
+      ctx.globalAlpha = 1;
     });
-    drawPointIcon(O_IDX, ox, midY, 17);
     // reserves, one row per side, right-aligned against the objective panel: the side's emblem, then a
     // column per vehicle class with its symbol on top and the count underneath
     const colW = 30;
@@ -2311,7 +2445,7 @@ function drawHUD() {
       if (lineView) hudText(`${deployLine} RESERVES`, lx, y + 9, 9, '#b9b195', 'right', 400);
       ctx.save(); ctx.translate(lx - lw - 15, y); drawFactionMark(ctx, team, 9); ctx.restore();
     });
-    // battle clock just right of O1 (red and pulsing in the last two minutes), then ATTACK / DEFEND
+    // battle clock just right of the last goal (red and pulsing in the last two minutes), then ATTACK / DEFEND
     let tx = ox + 34;
     if (!phase && battleLeft > 0) {
       const mm = Math.floor(battleLeft / 60), ss = String(battleLeft % 60).padStart(2, '0'), late = battleLeft <= 120;
@@ -2395,7 +2529,7 @@ function drawHUD() {
         let text, col = '#f3ead0';
         const canMe = you.team === ATTACKER ? cps[i][6] : cps[i][7];
         const need = you.team === ATTACKER ? CAP_POINTS[i].prev.map(j => CAP_POINTS[j].id).join(' or ') : CAP_POINTS[CAP_POINTS[i].next] ? CAP_POINTS[CAP_POINTS[i].next].id : '';
-        if (p.line && isLineDead(p.line)) { text = `LINE ${p.line} DEFEATED`; col = '#ff8a6a'; }
+        if (p.line && isLineDead(p.line)) { text = isLineClosed(p.line) ? `LINE ${p.line} CLOSED THIS BATTLE` : `LINE ${p.line} DEFEATED`; col = '#ff8a6a'; }
         else if (!active || (!canMe && owner !== you.team)) {
           text = owner === you.team ? `${p.id} SECURE` : `${p.id} LOCKED — hold ${need} first`;
           col = '#b9b195';
@@ -2502,6 +2636,14 @@ function setMinimapScale(v) {
   try { localStorage.setItem('zitadelle.minimap', minimapScale.toFixed(2)); } catch (e) { /* ignore */ }
 }
 const minimapSize = () => Math.min(170 * minimapScale, W * 0.45, H * 0.6);
+// the river on the minimap and the battle map (scale k, offset ox/oy)
+function drawRiverMap(c, k, ox, oy) {
+  if (!RIVER) return;
+  c.strokeStyle = 'rgba(70,105,120,0.9)'; c.lineWidth = Math.max(2, RIVER.hw * 2 * k); c.lineJoin = 'round';
+  c.beginPath(); RIVER.pts.forEach(([x, y], i) => (i ? c.lineTo(ox + x * k, oy + y * k) : c.moveTo(ox + x * k, oy + y * k))); c.stroke();
+  c.fillStyle = '#8f7a5a';
+  for (const b of RIVER.bridges) { c.beginPath(); c.arc(ox + b.x * k, oy + b.y * k, Math.max(2, 80 * k), 0, TAU); c.fill(); }
+}
 function drawMinimap() {
   const s = minimapSize(), x = W - s - 12, y = H - s - 12, k = s / WORLD;
   ctx.save();
@@ -2509,6 +2651,8 @@ function drawMinimap() {
   ctx.globalAlpha = MA;
   ctx.fillStyle = 'rgba(40,36,22,0.7)'; ctx.fillRect(x - 3, y - 3, s + 6, s + 6);
   ctx.fillStyle = 'rgba(184,174,121,0.85)'; ctx.fillRect(x, y, s, s);
+  drawForestMap(ctx, k, x, y);
+  drawRiverMap(ctx, k, x, y);
   ctx.fillStyle = 'rgba(70,58,38,0.6)';
   for (const b of BUILDINGS) ctx.fillRect(x + b.x * k - 1, y + b.y * k - 1, 2, 2);
   for (const r of REARS) {
@@ -2636,12 +2780,12 @@ function spawnOptions() {
     if (r.team !== playerTeam) return;
     const lost = r.line && isLineDead(r.line);
     const empty = !lost && !poolArr(playerTeam, -1 - k).some(n => n > 0);
-    out.push({ code: -1 - k, x: r.x, y: r.y, r: 380, id: r.name, name: 'Assembly area', rear: true, ok: !lost && !empty, why: lost ? 'lost' : empty ? 'out of reserves' : '' });
+    out.push({ code: -1 - k, x: r.x, y: r.y, r: 380, id: r.name, name: 'Assembly area', rear: true, ok: !lost && !empty, why: lost ? (isLineClosed(r.line) ? 'line closed' : 'lost') : empty ? 'out of reserves' : '' });
   });
   CAP_POINTS.forEach((p, i) => {
     const c = cps[i] || [], owner = OWNER[c[1]];
     let why = '';
-    if (p.line && isLineDead(p.line)) why = 'line defeated';
+    if (p.line && isLineDead(p.line)) why = isLineClosed(p.line) ? 'line closed this battle' : 'line defeated';
     else if (owner !== playerTeam) why = owner ? 'enemy held' : 'not held';
     else if (c[2]) why = 'contested';
     else if (vTanks.some(t => t.team !== playerTeam && Math.hypot(t.x - p.x, t.y - p.y) < p.r + 300)) why = 'enemies nearby';
@@ -2768,6 +2912,9 @@ function drawDeployMap(a) {
   // the steppe, villages, the two attack routes
   ctx.fillStyle = '#a39a68'; ctx.fillRect(X(0), Y(0), WORLD * sc, WORLD * sc);
   ctx.strokeStyle = '#5d5639'; ctx.lineWidth = 3; ctx.strokeRect(X(0), Y(0), WORLD * sc, WORLD * sc);
+  if (MAP.city) { ctx.fillStyle = 'rgba(130,124,108,0.55)'; ctx.beginPath(); ctx.arc(X(MAP.city.x), Y(MAP.city.y), MAP.city.r * sc, 0, TAU); ctx.fill(); }
+  drawForestMap(ctx, sc, X(0), Y(0));
+  drawRiverMap(ctx, sc, X(0), Y(0));
   ctx.fillStyle = 'rgba(70,58,38,0.55)';
   for (const b of BUILDINGS) ctx.fillRect(X(b.x) - 2, Y(b.y) - 2, 4, 4);
   drawRoute(ctx, sc, X(0), Y(0), 3);
@@ -3154,9 +3301,12 @@ const ui = {
   chathint: document.getElementById('chathint'),
   dpname: document.getElementById('dpname'),
 };
+let lastStatus = '';   // connection trouble, shown on the menu and the theatre map
 function setStatus(text) {
+  lastStatus = text;
   ui.status.textContent = text;
   ui.deployBtn.disabled = !!text;
+  renderHomeEnter();
 }
 
 // Vehicle picker: every vehicle of the chosen side, grouped by role. Used on the menu and the death screen.
@@ -3597,6 +3747,214 @@ function startGame() {
 }
 ui.deployBtn.addEventListener('click', startGame);
 nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') startGame(); });
+
+// =====================================================================
+// Home: a theatre map of Europe. Pick a battle, then the menu above picks a name and a side.
+// A battle is live when its map (shared/maps/<map>.js) is the one this server is running; the rest show as planned.
+// =====================================================================
+const BATTLES = [
+  { id: 'kursk', name: 'Kursk', kind: 'Operation Citadel', place: 'Prokhorovka · southern face of the salient', date: 'July 1943',
+    lon: 36.73, lat: 51.03, map: 'kursk', sides: [['de'], ['su']], roles: ['Attacker', 'Defender'], sub: 'Kursk Salient · July 1943',
+    desc: 'Germany attacks up two lines, village by village, toward Prokhorovka. The Soviet Union holds and counter-attacks. Both sides fight from fixed reserves that don\'t refill.' },
+  // not a historical battle: placed near Kharkov for now
+  { id: 'town', name: 'Town', kind: 'Urban assault', place: 'Six attack lines into the town centre', date: 'Test map',
+    lon: 36.23, lat: 49.99, left: true, map: 'town', sides: [['de'], ['su']], roles: ['Attacker', 'Defender'], sub: 'Town · six lines, three objectives',
+    desc: 'Germany attacks from every side, through farmland and suburbs into the streets. The Soviet Union holds the Town Hall, the Railway Station and the Cathedral; Germany has to take all three.' },
+  { id: 'stalingrad', name: 'Stalingrad', kind: 'Operation Uranus', place: 'The Don bend, north-west of the city', date: 'November 1942',
+    lon: 44.5, lat: 48.7, left: true, sides: [['de'], ['su']], roles: ['Defender', 'Attacker'],
+    desc: 'Soviet armour breaks through on the flanks and closes the ring around the Sixth Army.' },
+  { id: 'sicily', name: 'Sicily', kind: 'Operation Husky', place: 'Gela beachhead', date: 'July 1943',
+    lon: 14.25, lat: 37.07, sides: [['it', 'de'], ['us', 'gb']], roles: ['Defender', 'Attacker'],
+    desc: 'Italian and German tanks counter-attack the Allied landings before the beachhead can be secured.' },
+  { id: 'normandy', name: 'Normandy', kind: 'Operation Overlord', place: 'Villers-Bocage and the bocage', date: 'June 1944',
+    lon: -0.6, lat: 49.18, sides: [['de'], ['gb', 'us']], roles: ['Defender', 'Attacker'],
+    desc: 'Hedgerows, sunken lanes and stone farms. The Allies push inland from the beaches and German armour holds the roads.' },
+  { id: 'ardennes', name: 'Ardennes', kind: 'Wacht am Rhein', place: 'Bastogne crossroads', date: 'December 1944',
+    lon: 5.72, lat: 50.0, sides: [['de'], ['us']], roles: ['Attacker', 'Defender'],
+    desc: 'A last German offensive through the snowbound forest, aimed at the road junctions the Americans have to keep.' },
+  { id: 'berlin', name: 'Berlin', kind: 'Seelow Heights', place: 'The Oder front, east of the city', date: 'April 1945',
+    lon: 14.4, lat: 52.55, sides: [['de'], ['su']], roles: ['Defender', 'Attacker'],
+    desc: 'The final assault. Soviet armour attacks dug-in tank destroyers on the heights in front of Berlin.' },
+];
+// a map with no entry above (one made in the editor) gets one from its own definition
+if (!BATTLES.some(b => b.map === MAP_ID)) {
+  const th = MAP.theatre || {};
+  BATTLES.unshift({ id: MAP_ID, map: MAP_ID, name: MAP.name, kind: th.kind || 'Custom map', place: th.place || MAP.name, date: th.date || '',
+    lon: th.lon != null ? th.lon : 24, lat: th.lat != null ? th.lat : 50, sides: [[ATTACKER], [DEFENDER]], roles: ['Attacker', 'Defender'],
+    sub: MAP.name, desc: th.desc || `${TEAMS[ATTACKER].name} attacks; ${TEAMS[DEFENDER].name} defends.` });
+}
+BATTLES.forEach(b => { b.live = !!b.map && b.map === MAP_ID; });
+const homeEl = document.getElementById('home'), euSvg = document.getElementById('eumap'), briefEl = document.getElementById('brief');
+const EU = window.EUROPE;
+const euProj = (lon, lat) => [(lon - EU.lon0) * EU.c * EU.k, (EU.lat1 - lat) * EU.k];
+const SVGNS = 'http://www.w3.org/2000/svg';
+const svgEl = (tag, attrs, parent) => {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+};
+let homeSel = (BATTLES.find(b => b.live) || BATTLES[0]).id, homeLive = null, homeTimer = 0;
+const homeOpen = () => !homeEl.classList.contains('hidden');
+// labels and markers live in screen pixels: each sits in a group counter-scaled by the map's zoom
+const pinned = [];
+function pin(lon, lat, parent) {
+  const [x, y] = euProj(lon, lat), g = svgEl('g', {}, parent);
+  pinned.push({ g, x, y });
+  return g;
+}
+function buildHomeMap() {
+  const ns = { 'vector-effect': 'non-scaling-stroke' };
+  svgEl('rect', { x: 0, y: 0, width: EU.w, height: EU.h, fill: '#11130d' }, euSvg);
+  svgEl('path', { class: 'land', d: EU.land, ...ns }, euSvg);
+  const over = svgEl('g', {}, euSvg);
+  BATTLES.forEach(b => {
+    const g = pin(b.lon, b.lat, over);
+    g.setAttribute('class', 'bt ' + (b.live ? 'live' : 'planned'));
+    g.dataset.id = b.id;
+    svgEl('rect', { class: 'hit', x: b.left ? -154 : -16, y: -18, width: 170, height: 40 }, g);
+    if (b.live) {
+      const p = svgEl('circle', { r: 10, fill: 'none', stroke: '#d9573f', 'stroke-width': 2 }, g);
+      svgEl('animate', { attributeName: 'r', values: '10;30', dur: '2.2s', repeatCount: 'indefinite' }, p);
+      svgEl('animate', { attributeName: 'opacity', values: '.8;0', dur: '2.2s', repeatCount: 'indefinite' }, p);
+      svgEl('circle', { r: 12, fill: 'rgba(217,87,63,.18)', stroke: '#d9573f', 'stroke-width': 1.5 }, g);
+      svgEl('circle', { r: 5, fill: '#d9573f' }, g);
+    } else {
+      svgEl('rect', { x: -5, y: -5, width: 10, height: 10, transform: 'rotate(45)', fill: '#1b1c14', stroke: '#8d8668', 'stroke-width': 1.5 }, g);
+    }
+    svgEl('circle', { class: 'ring', r: b.live ? 17 : 11 }, g);
+    const x = (b.live ? 22 : 15) * (b.left ? -1 : 1), anchor = b.left ? 'end' : 'start';   // left: label on the marker's west side
+    const nm = svgEl('text', { class: 'name', x, y: b.live ? 0 : 1, 'text-anchor': anchor }, g); nm.textContent = b.name;
+    const dt = svgEl('text', { class: 'date', x, y: 15, 'text-anchor': anchor }, g); dt.textContent = b.live ? b.date + ' · live' : b.date;
+    g.addEventListener('click', () => selectBattle(b.id));
+    g.addEventListener('mouseenter', () => Sound.click([0], 3600, 0.12));
+  });
+}
+// The view: s = screen pixels per map unit, (vx, vy) = map point at the screen's top-left corner.
+// The overview frames the core of the theatre in the part of the screen the briefing panel doesn't cover;
+// clicking a battle flies in on it, and clicking the empty map (or Esc) flies back out.
+const hv = { s: 1, vx: 0, vy: 0, focus: null, anim: 0 };
+function homeFrame() {
+  const W = innerWidth, H = innerHeight, narrow = W <= 820, top = 64;
+  const side = narrow ? 0 : 400, bottom = narrow ? Math.min(H * 0.52, briefEl.offsetHeight || H * 0.45) : 0;
+  const aw = W - side, ah = Math.max(160, H - top - bottom);
+  return { W, H, aw, ah, cx: aw / 2, cy: top + ah / 2 };
+}
+// target view: { s, mx, my } = scale and the map point shown at the centre of the free area
+function homeTarget() {
+  const f = homeFrame(), [x0, y0] = euProj(-10, 61.5), [x1, y1] = euProj(47, 36);
+  const fitS = Math.min(f.aw / (x1 - x0), f.ah / (y1 - y0));
+  if (!hv.focus) return { s: fitS, mx: (x0 + x1) / 2, my: (y0 + y1) / 2 };
+  const [mx, my] = euProj(hv.focus.lon, hv.focus.lat);
+  return { s: fitS * 3, mx, my };
+}
+function setHomeView(t) {
+  const f = homeFrame();
+  hv.s = t.s; hv.vx = t.mx - f.cx / t.s; hv.vy = t.my - f.cy / t.s;
+  const vw = f.W / hv.s, vh = f.H / hv.s;
+  euSvg.setAttribute('viewBox', `${hv.vx} ${hv.vy} ${vw} ${vh}`);
+  pinned.forEach(p => p.g.setAttribute('transform', `translate(${p.x} ${p.y}) scale(${1 / hv.s})`));
+}
+function fitHomeMap() { cancelAnimationFrame(hv.anim); setHomeView(homeTarget()); }
+// glide from the current view to the target: scale eases in log space, the centre point slides across
+function flyHome() {
+  cancelAnimationFrame(hv.anim);
+  const f = homeFrame(), a = { s: hv.s, mx: hv.vx + f.cx / hv.s, my: hv.vy + f.cy / hv.s }, b = homeTarget();
+  const t0 = performance.now(), dur = 750;
+  const step = ms => {
+    const u = Math.min(1, (ms - t0) / dur), e = u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2;
+    setHomeView({ s: Math.exp(lerp(Math.log(a.s), Math.log(b.s), e)), mx: lerp(a.mx, b.mx, e), my: lerp(a.my, b.my, e) });
+    if (u < 1) hv.anim = requestAnimationFrame(step);
+  };
+  hv.anim = requestAnimationFrame(step);
+}
+function focusBattle(b) { hv.focus = b; flyHome(); }
+function homeOverview() { if (hv.focus) { hv.focus = null; flyHome(); } }
+homeEl.addEventListener('pointerdown', () => Sound.init());   // audio can only start from a click
+euSvg.addEventListener('click', e => { if (!e.target.closest('.bt')) homeOverview(); });
+function renderBrief() {
+  const b = BATTLES.find(q => q.id === homeSel);
+  euSvg.querySelectorAll('.bt').forEach(g => g.classList.toggle('sel', g.dataset.id === b.id));
+  const side = (teams, role) => `<div class="bside"><div class="marks">${teams.map(t => `<canvas width="80" height="80" data-t="${t}"></canvas>`).join('')}</div>
+    <b>${teams.map(t => escapeHtml(TEAMS[t].name)).join(' &amp; ')}</b><small>${role}</small></div>`;
+  const L = b.live && homeLive && homeLive[b.map];
+  const facts = b.live
+    ? `<div><label>Status</label><span class="live">${L && L.phase === 'end' ? 'Between battles' : 'In progress'}</span></div>
+       <div><label>Commanders</label><span>${L ? L.humans : '–'} <small style="color:#8d8668">+ bots</small></span></div>`
+    : `<div><label>Status</label><span>Planned</span></div><div><label>Nations</label><span>${b.sides.flat().every(t => Z.FACTIONS[t].playable) ? 'Ready' : 'In preparation'}</span></div>`;
+  briefEl.innerHTML = `
+    <div class="bkind">${escapeHtml(b.kind)} &middot; ${escapeHtml(b.date)}</div>
+    <h2>${escapeHtml(b.name)}</h2>
+    <div class="bplace">${escapeHtml(b.place)}</div>
+    <div class="bsides">${side(b.sides[0], b.roles[0])}<span class="bvs">VS</span>${side(b.sides[1], b.roles[1])}</div>
+    <p class="bdesc">${escapeHtml(b.desc)}</p>
+    <div class="bfacts">${facts}</div>
+    <button class="btn enter" id="enterbtn">${b.live ? 'Enter battle' : 'Not yet available'}</button>
+    <div class="bnote" id="bnote"></div>
+    <div class="blist"><div class="bhead">Battles</div>${BATTLES.map(q =>
+      `<button data-id="${q.id}" class="${q.id === b.id ? 'sel' : ''}"><span>${escapeHtml(q.name)}</span><small class="${q.live ? 'live' : ''}">${q.live ? 'Live' : q.date}</small></button>`).join('')}</div>`;
+  briefEl.querySelectorAll('canvas[data-t]').forEach(cv => {
+    const c = cv.getContext('2d');
+    c.save(); c.translate(cv.width / 2, cv.height / 2); drawFactionMark(c, cv.dataset.t, cv.width * 0.34); c.restore();
+  });
+  briefEl.querySelectorAll('.blist button').forEach(el => {
+    el.addEventListener('click', () => selectBattle(el.dataset.id));
+    el.addEventListener('mouseenter', () => Sound.click([0], 3600, 0.12));
+  });
+  document.getElementById('enterbtn').addEventListener('click', () => enterBattle(b.id));
+  renderHomeEnter();
+}
+function renderHomeEnter() {
+  const btn = document.getElementById('enterbtn');
+  if (!btn) return;
+  const b = BATTLES.find(q => q.id === homeSel);
+  btn.disabled = !b.live || !!lastStatus;
+  document.getElementById('bnote').textContent = b.live ? lastStatus : 'This battle is planned for a later version.';
+}
+function selectBattle(id) {
+  const b = BATTLES.find(q => q.id === id);
+  homeSel = id;
+  renderBrief();
+  focusBattle(b);
+}
+function pollBattles() {
+  fetch('/battles.json').then(r => r.json()).then(j => { homeLive = j; if (homeOpen()) renderBrief(); }).catch(() => {});
+}
+function startHomePolling() {
+  clearInterval(homeTimer);
+  pollBattles();
+  homeTimer = setInterval(() => { if (homeOpen()) pollBattles(); }, 5000);
+}
+function showHome() {
+  state = 'menu';
+  ui.menu.classList.add('hidden');
+  homeEl.classList.remove('hidden');
+  renderBrief(); fitHomeMap(); startHomePolling();
+}
+function enterBattle(id) {
+  const b = BATTLES.find(q => q.id === id);
+  if (!b || !b.live || lastStatus) return;
+  Sound.init();
+  document.getElementById('menusub').textContent = b.sub;
+  clearInterval(homeTimer);
+  homeEl.classList.add('hidden');
+  ui.menu.classList.remove('hidden');
+  nameInput.focus();
+}
+buildHomeMap();
+renderBrief();
+fitHomeMap();
+startHomePolling();
+addEventListener('resize', () => { if (homeOpen()) fitHomeMap(); });
+document.getElementById('tohome').addEventListener('click', showHome);
+document.getElementById('homeinfo').addEventListener('click', openInfo);
+document.getElementById('homeprog').addEventListener('click', openProgress);
+addEventListener('keydown', e => {
+  if (infoOpen() || progOpen()) return;
+  if (homeOpen() && e.key === 'Enter') enterBattle(homeSel);
+  else if (homeOpen() && e.key === 'Escape') homeOverview();
+  else if (e.key === 'Escape' && state === 'menu' && !ui.menu.classList.contains('hidden')) showHome();
+});
 document.getElementById('tohq').addEventListener('click', switchSides);
 document.getElementById('infobtn').addEventListener('click', openInfo);
 document.getElementById('mapinfo').addEventListener('click', openInfo);

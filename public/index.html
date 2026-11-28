@@ -12,10 +12,26 @@
 <body>
 <canvas id="game"></canvas>
 
-<div id="menu" class="overlay">
+<!-- home: theatre map of Europe; pick a battle, then the menu below picks a side -->
+<div id="home" class="home">
+  <svg id="eumap" class="eumap" preserveAspectRatio="none" aria-label="Map of Europe with the battles you can join"></svg>
+  <div class="homevig"></div>
+  <header class="homebar">
+    <span class="homelogo">ZITADELLE</span>
+    <span class="homesub">Theatre of operations &middot; Europe 1942&ndash;45</span>
+    <span class="homespacer"></span>
+    <a href="/editor" class="btn secondary hsmall" style="text-decoration:none">Map editor</a>
+    <button id="homeinfo" class="btn secondary hsmall">Nation info</button>
+    <button id="homeprog" class="btn secondary hsmall">Progression</button>
+  </header>
+  <aside id="brief" class="brief"></aside>
+</div>
+
+<div id="menu" class="overlay hidden">
   <div class="panel wide">
+    <button id="tohome" class="tohome">&larr; Theatre map</button>
     <h1>ZITADELLE</h1>
-    <div class="sub">Kursk Salient &middot; July 1943</div>
+    <div class="sub" id="menusub">Kursk Salient &middot; July 1943</div>
     <input id="name" maxlength="16" placeholder="Commander name" autocomplete="off" spellcheck="false">
     <div class="menulbl">Choose a Faction</div>
     <div class="factions">
@@ -123,7 +139,11 @@
 </div>
 
 <script src="armor.js"></script>
+<script src="map.js"></script>
+<script src="water.js"></script>
+<script src="forest.js"></script>
 <script src="shared.js"></script>
+<script src="europe.js"></script>
 <script src="client.js"></script>
 </body>
 </html>

@@ -4,7 +4,9 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { WebSocketServer, WebSocket } = require('ws');
-const { TICK_RATE, SNAP_RATE, CLASS_IDS } = require('../shared/shared.js');
+const { TICK_RATE, SNAP_RATE, CLASS_IDS, MAP, MAP_ID, MAP_SIG, MAP_BUILT } = require('../shared/shared.js');
+const MAPS = require('../shared/maps');
+const { checkMap } = require('../shared/mapcheck.js');
 const { COMPONENT_IDS } = require('../shared/armor.js');
 const { createGame } = require('./game.js');
 
@@ -19,9 +21,29 @@ const FILES = {
   '/index.html': ['public/index.html', 'text/html; charset=utf-8'],
   '/style.css':  ['public/style.css', 'text/css; charset=utf-8'],
   '/client.js':  ['public/client.js', 'application/javascript; charset=utf-8'],
+  '/europe.js':  ['public/europe.js', 'application/javascript; charset=utf-8'],
   '/shared.js':  ['shared/shared.js', 'application/javascript; charset=utf-8'],
   '/armor.js':   ['shared/armor.js', 'application/javascript; charset=utf-8'],
+  '/water.js':   ['shared/water.js', 'application/javascript; charset=utf-8'],
+  // the map editor: the generator and checks run in the page for its live preview
+  '/editor':     ['public/editor.html', 'text/html; charset=utf-8'],
+  '/editor.js':  ['public/editor.js', 'application/javascript; charset=utf-8'],
+  '/mapgen.js':  ['shared/mapgen.js', 'application/javascript; charset=utf-8'],
+  '/mapcheck.js': ['shared/mapcheck.js', 'application/javascript; charset=utf-8'],
+  '/forest.js':  ['shared/forest.js', 'application/javascript; charset=utf-8'],
 };
+
+// /map.js, built once: the map definition file as written, plus the finished layout. Coordinates are rounded
+// to a hundredth for size; the page only draws them, the server keeps full precision for collisions.
+const MAP_SCRIPT = (() => {
+  const src = fs.readFileSync(path.join(ROOT, 'shared/maps', MAPS[MAP_ID].file), 'utf8');
+  const built = JSON.stringify(MAP_BUILT, (k, v) => (typeof v === 'number' && !Number.isInteger(v) ? Math.round(v * 100) / 100 : v));
+  return `${src}
+self.ZITADELLE_MAP = ${JSON.stringify(MAP_ID)};
+self.ZMAP_SIG = ${JSON.stringify(MAP_SIG)};
+self.ZMAP_BUILT = ${built};
+`;
+})();
 
 // Music in public/music/. Each slot lists one or more file names there (the client picks one at random);
 // only these files are ever served.
@@ -59,6 +81,27 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify(musicList()));
     return;
   }
+  // live state of each battle for the theatre map (only Kursk runs for now)
+  // the map in play, for browsers: its definition, which map it is, and the layout this server built from it
+  // (shared.js reads ZITADELLE_MAP, ZMAPS, ZMAP_BUILT and ZMAP_SIG)
+  if (url === '/map.js' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-cache' });
+    res.end(MAP_SCRIPT);
+    return;
+  }
+  // every map definition in shared/maps/, for the editor to start from
+  if (url === '/maps.json' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
+    res.end(JSON.stringify(Object.fromEntries(Object.entries(MAPS).map(([id, d]) => { const { file, ...rest } = d; return [id, rest]; }))));
+    return;
+  }
+  // live state of each running battle, keyed by map id, for the theatre map
+  if (url === '/battles.json' && req.method === 'GET') {
+    const st = game.stats();
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
+    res.end(JSON.stringify({ [MAP_ID]: { humans: st.humans, tanks: st.tanks, phase: game.phase } }));
+    return;
+  }
   const f = FILES[url] || musicFile(url);
   if (!f || req.method !== 'GET') { res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end('Not found'); return; }
   fs.readFile(path.join(ROOT, f[0]), (err, data) => {
@@ -78,7 +121,7 @@ wss.on('connection', ws => {
   game.addClient(client);
   // roster: vehicles and components go over the wire by index, so the client checks it has the same lists in
   // the same order (a page left open across an update would otherwise show the wrong vehicles or components)
-  ws.send(JSON.stringify({ t: 'welcome', dev: DEV, tickRate: TICK_RATE, snapRate: SNAP_RATE, roster: CLASS_IDS.join(',') + '|' + COMPONENT_IDS.join(',') }));
+  ws.send(JSON.stringify({ t: 'welcome', dev: DEV, tickRate: TICK_RATE, snapRate: SNAP_RATE, roster: CLASS_IDS.join(',') + '|' + COMPONENT_IDS.join(','), mapSig: MAP_SIG }));
 
   ws.on('message', data => {
     if (++client.msgs > 120) return; // crude flood guard: max ~120 msgs per second
@@ -124,5 +167,7 @@ function broadcast() {
 setInterval(() => { for (const ws of wss.clients) { const c = clientOf.get(ws); if (c) c.msgs = 0; } }, 1000);
 
 server.listen(PORT, () => {
-  console.log(`Zitadelle server running — open http://localhost:${PORT}${DEV ? '  (dev mode)' : ''}`);
+  console.log(`Zitadelle server running — open http://localhost:${PORT}  (map: ${MAP.name}${DEV ? ', dev mode' : ''})`);
+  // anything wrong with the map's layout (the editor at /editor shows the same checks while you design)
+  for (const it of checkMap(MAP, MAP_BUILT)) console.log(`  map ${it.level}: ${it.msg}`);
 });

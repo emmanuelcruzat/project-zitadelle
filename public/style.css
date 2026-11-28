@@ -424,3 +424,70 @@ body.board-open .ammobar, body.end-open .ammobar { visibility: hidden; }
 .swapin { animation: swapIn .28s cubic-bezier(.2,.8,.2,1); }
 @keyframes swapIn { from { transform: translateX(calc(var(--dir, 1) * 40px)); opacity: 0; } to { transform: none; opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .swapout { transition: none; transform: none; opacity: 1; } .swapin { animation: none; } }
+
+/* ===== home: theatre map of Europe ===== */
+.home { position: fixed; inset: 0; z-index: 9; background: #11130d; overflow: hidden; }
+.eumap { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.homevig { position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(ellipse at 40% 50%, transparent 55%, rgba(8,9,5,.75) 100%); }
+.eumap .land { fill: #25271b; stroke: #57523a; stroke-width: 1.1; stroke-linejoin: round; }
+.eumap .bt { cursor: pointer; }
+.eumap .bt .hit { fill: transparent; }
+.eumap .bt .name { font: 600 16px 'Oswald', sans-serif; letter-spacing: 2.5px; text-transform: uppercase; fill: #e7dcb1;
+  paint-order: stroke; stroke: #11130d; stroke-width: 4px; }
+.eumap .bt .date { font: 11px 'Oswald', sans-serif; letter-spacing: 2px; text-transform: uppercase; fill: #a99f78;
+  paint-order: stroke; stroke: #11130d; stroke-width: 4px; }
+.eumap .bt.planned .name { fill: #9a9273; font-size: 14px; }
+.eumap .bt.planned .date { fill: #6f6950; }
+.eumap .bt .ring { fill: none; stroke: #e7dcb1; stroke-width: 1.5; opacity: 0; transition: opacity .15s; }
+.eumap .bt:hover .ring, .eumap .bt.sel .ring { opacity: 1; }
+.eumap .bt.planned:hover .name, .eumap .bt.planned.sel .name { fill: #d6cca3; }
+
+.homebar { position: absolute; top: 0; left: 0; right: 0; height: 64px; display: flex; align-items: center; gap: 18px; padding: 0 20px;
+  background: linear-gradient(rgba(17,19,13,.96), rgba(17,19,13,.82)); border-bottom: 1px solid #3e3a28; }
+.homelogo { font-family: 'Black Ops One', Impact, sans-serif; font-size: 28px; letter-spacing: 3px; color: #e7dcb1; text-shadow: 2px 2px 0 #2a261a; }
+.homesub { font-size: 13px; letter-spacing: 3px; text-transform: uppercase; color: #a99f78; }
+.homespacer { flex: 1; }
+.btn.hsmall { font-size: 14px; letter-spacing: 2px; padding: 5px 14px; }
+
+.brief { position: absolute; top: 64px; right: 0; bottom: 0; width: 400px; overflow-y: auto;
+  background: rgba(24,24,17,.95); border-left: 2px solid #5d5639; padding: 24px 24px 18px;
+  display: flex; flex-direction: column; box-shadow: -20px 0 40px rgba(0,0,0,.35); }
+.brief .bkind { font-size: 12px; letter-spacing: 3px; text-transform: uppercase; color: #d9b46b; }
+.brief h2 { font-family: 'Black Ops One', Impact, sans-serif; font-weight: normal; font-size: 46px; line-height: 1; letter-spacing: 2px; color: #e7dcb1; margin: 6px 0 4px; }
+.brief .bplace { color: #a99f78; letter-spacing: 1.5px; font-size: 15px; }
+.bsides { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: center; margin: 20px 0 16px; }
+.bside { display: flex; flex-direction: column; align-items: center; gap: 4px; background: #15150f; border: 1px solid #3e3a28; padding: 10px 6px; text-align: center; }
+.bside .marks { display: flex; gap: 4px; }
+.bside canvas { width: 40px; height: 40px; }
+.bside b { font-weight: 400; font-size: 15px; letter-spacing: 1.5px; text-transform: uppercase; color: #e7dcb1; line-height: 1.15; }
+.bside small { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #8d8668; }
+.bvs { font-family: 'Black Ops One', Impact, sans-serif; color: #5d5639; font-size: 18px; }
+.brief p.bdesc { color: #c9bf98; font-size: 15px; line-height: 1.55; letter-spacing: .3px; }
+.bfacts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 16px 0 18px; }
+.bfacts div { background: #15150f; border: 1px solid #3e3a28; padding: 6px 10px; }
+.bfacts label { display: block; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: #8d8668; }
+.bfacts span { font-size: 16px; color: #f0e8c8; letter-spacing: .5px; }
+.bfacts .live { color: #9cc05a; }
+.bfacts .live::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #9cc05a; margin-right: 7px; vertical-align: 2px; box-shadow: 0 0 6px #9cc05a; }
+.brief .btn.enter { width: 100%; padding: 10px 0; }
+.bnote { min-height: 18px; margin-top: 8px; font-size: 13px; color: #d9b46b; letter-spacing: 1px; text-align: center; }
+.blist { margin-top: auto; padding-top: 20px; }
+.blist .bhead { font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: #8d8668; border-bottom: 1px solid #3e3a28; padding-bottom: 4px; margin-bottom: 4px; }
+.blist button { font: inherit; width: 100%; display: flex; justify-content: space-between; align-items: baseline; gap: 10px; background: none; border: 0; border-left: 2px solid transparent;
+  color: #a99f78; padding: 5px 8px; cursor: pointer; text-align: left; letter-spacing: 1px; }
+.blist button:hover { background: #1f1f17; color: #e7dcb1; }
+.blist button.sel { border-left-color: #d9b46b; color: #e7dcb1; background: #1f1f17; }
+.blist button small { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #6f6950; }
+.blist button small.live { color: #9cc05a; }
+
+.tohome { display: block; font: inherit; font-size: 14px; letter-spacing: 2px; text-transform: uppercase; color: #a99f78;
+  background: none; border: 0; cursor: pointer; margin: -12px 0 10px -8px; padding: 2px 8px; }
+.tohome:hover { color: #e7dcb1; }
+
+@media (max-width: 820px) {
+  .homesub { display: none; }
+  .brief { top: auto; left: 0; width: 100%; max-height: 52vh; border-left: 0; border-top: 2px solid #5d5639; padding: 16px; }
+  .brief h2 { font-size: 34px; }
+  .blist { display: none; }
+}
